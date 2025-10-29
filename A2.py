@@ -8,7 +8,6 @@ import datetime
 
 # Metadados do Projeto
 NOME_TRIBUNAL = "TJ do Rio de Janeiro (TJRJ)"
-# Endpoint mantido apenas para referência interna (não aparece na tela)
 ENDPOINT_SIMULADO = "https://api-publica.datajud.cnj.jus.br/api_publica_tjrj/_search"
 
 # Função que SIMULA a busca na API do CNJ
@@ -18,9 +17,6 @@ def carregar_dados_simulados():
     Cria um DataFrame que simula o resultado de uma busca massiva na API do CNJ 
     para processos de MPU (Lei Maria da Penha) no TJRJ, incluindo 2023, 2024 e 2025.
     """
-    # Esta info fica apenas no console ou para o desenvolvedor, não na tela.
-    # st.info("Simulando busca de metadados processuais na API do DataJud do CNJ...") 
-    
     # 1. Definindo dados base para 2023, 2024 e 2025
     data_range = pd.to_datetime(pd.date_range(start='2023-01-01', end='2025-12-31', freq='D'))
     num_registros = 20000 
@@ -54,16 +50,9 @@ def carregar_dados_simulados():
     
     return df
 
-# --- 2. FUNÇÕES DE GERAÇÃO DE GRÁFICOS (Sem Alteração na Lógica) ---
+# --- 2. FUNÇÕES DE GERAÇÃO DE GRÁFICOS (Gráfico 1 removido, demais renumerados) ---
 
-def criar_grafico_1_comparacao_anual(df_geral):
-    """Gráfico 1: Compara MPU Pedidas vs. Proferidas ao longo de TODOS os anos (Visão Macro)."""
-    df_agrupado = df_geral.groupby(['ano', 'status']).size().reset_index(name='Total')
-    fig = px.line(df_agrupado, x='ano', y='Total', color='status', 
-                  title='MPU Solicitadas e Proferidas (Comparação Anual)', markers=True)
-    fig.update_xaxes(dtick=1, tickformat="%Y")
-    fig.update_layout(yaxis_title="Volume de MPUs", xaxis_title="Ano")
-    return fig
+# A função criar_grafico_1_comparacao_anual foi removida.
 
 def criar_grafico_2_tempo_segmentado(df_filtrado):
     """Gráfico 2: Segmenta o tempo médio de expedição em faixas de horas do ANO SELECIONADO."""
@@ -121,13 +110,13 @@ st.header(f"Tribunal de Justiça do Rio de Janeiro ({NOME_TRIBUNAL})")
 
 st.markdown("---")
 
-# --- SELETOR DE ANO E BOTÃO DE GERAÇÃO (Substitui a Sidebar) ---
+# --- SELETOR DE ANO ---
 st.subheader("Selecione o Ano para Análise Detalhada:")
 
 # Opções de ano disponíveis no dataset simulado
 anos_disponiveis = sorted(df_dados['ano'].unique(), reverse=True)
 
-# Usa st.radio no corpo principal para o usuário escolher o ano (mais direto)
+# Usa st.radio no corpo principal para o usuário escolher o ano
 ano_selecionado = st.radio(
     "Escolha o período para focar a análise:",
     anos_disponiveis,
@@ -163,29 +152,24 @@ with col3:
 st.markdown("---")
 
 # --- GRÁFICOS ---
+# NOTA: Os gráficos foram reordenados e renumerados internamente no código para manter a consistência, 
+# mas o título subheader reflete a ordem desejada pelo usuário: Mensal, Tempo e Tipos.
 
-# Gráfico 1: Comparação Anual (Usa TODOS os dados)
-st.subheader("Gráfico 1: Comparação Anual de Pedidos e Proferimentos de MPU (Tendência)")
-fig1 = criar_grafico_1_comparacao_anual(df_dados)
-st.plotly_chart(fig1, use_container_width=True)
-
-st.markdown("---")
-
-# Gráfico 4: Mensal (Usa APENAS os dados do ano selecionado)
-st.subheader(f"Gráfico 4: Evolução Mensal de Pedidos e Resultados ({ano_selecionado})")
+# Gráfico 4 (agora o 1º na exibição): Mensal (Usa APENAS os dados do ano selecionado)
+st.subheader(f"1. Evolução Mensal de Pedidos e Resultados ({ano_selecionado})")
 fig4 = criar_grafico_4_mensal(df_dados, ano_selecionado)
 st.plotly_chart(fig4, use_container_width=True)
 
 st.markdown("---")
 
-# Gráfico 2: Tempo de Expedição (Usa APENAS os dados do ano selecionado)
-st.subheader(f"Gráfico 2: Distribuição do Tempo de Expedição em Horas ({ano_selecionado})")
+# Gráfico 2 (agora o 2º na exibição): Tempo de Expedição (Usa APENAS os dados do ano selecionado)
+st.subheader(f"2. Distribuição do Tempo de Expedição em Horas ({ano_selecionado})")
 fig2 = criar_grafico_2_tempo_segmentado(df_ano_selecionado) 
 st.plotly_chart(fig2, use_container_width=True)
 
 st.markdown("---")
 
-# Gráfico 3: Proporção dos Tipos (Usa APENAS os dados do ano selecionado)
-st.subheader(f"Gráfico 3: Proporção dos Tipos de Medidas Protetivas Concedidas ({ano_selecionado})")
+# Gráfico 3 (agora o 3º na exibição): Proporção dos Tipos (Usa APENAS os dados do ano selecionado)
+st.subheader(f"3. Proporção dos Tipos de Medidas Protetivas Concedidas ({ano_selecionado})")
 fig3 = criar_grafico_3_tipos_mpu(df_ano_selecionado)
 st.plotly_chart(fig3, use_container_width=True)

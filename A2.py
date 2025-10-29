@@ -15,19 +15,20 @@ ENDPOINT_SIMULADO = "https://api-publica.datajud.cnj.jus.br/api_publica_tjrj/_se
 def carregar_dados_simulados():
     """
     Cria um DataFrame que simula o resultado de uma busca massiva na API do CNJ 
-    para processos de MPU (Lei Maria da Penha) no TJRJ.
+    para processos de MPU (Lei Maria da Penha) no TJRJ, incluindo 2023, 2024 e 2025.
     """
     st.info("Simulando busca de metadados processuais na API do DataJud do CNJ...")
     
-    # 1. Definindo dados base para 2022 e 2023
-    data_range = pd.to_datetime(pd.date_range(start='2022-01-01', end='2023-12-31', freq='D'))
-    num_registros = 15000 
+    # 1. Definindo dados base para 2023, 2024 e 2025
+    data_range = pd.to_datetime(pd.date_range(start='2023-01-01', end='2025-12-31', freq='D'))
+    # Aumentando o número de registros para simular uma base maior
+    num_registros = 20000 
     
     # Gera datas aleatórias de ajuizamento
     datas_ajuizamento = np.random.choice(data_range, num_registros)
     
-    # Datas de Decisão (Decisão = Ajuizamento + um delta de horas/dias)
-    # 70% das decisões em até 48h, 30% mais demoradas
+    # Datas de Decisão (Simulação de tempo de resposta)
+    # 70% das decisões em até 48h (Rápida), 30% mais demoradas
     delta_horas = np.where(
         np.random.rand(num_registros) < 0.7, 
         np.random.randint(1, 48, num_registros),
@@ -58,9 +59,9 @@ def carregar_dados_simulados():
 # --- 2. FUNÇÕES DE GERAÇÃO DE GRÁFICOS ---
 
 def criar_grafico_1_comparacao_anual(df_geral):
-    """Compara MPU Pedidas vs. Proferidas ao longo dos anos."""
+    """Gráfico 1: Compara MPU Pedidas vs. Proferidas ao longo de TODOS os anos (Visão Macro)."""
     
-    # 1. Agrupa por ano e conta
+    # Agrupa por ano e conta
     df_agrupado = df_geral.groupby(['ano', 'status']).size().reset_index(name='Total')
     
     # Cria o Gráfico de Linhas Interativo (Plotly Express)
@@ -77,7 +78,7 @@ def criar_grafico_1_comparacao_anual(df_geral):
     return fig
 
 def criar_grafico_2_tempo_segmentado(df_filtrado):
-    """Segmenta o tempo médio de expedição em faixas de horas."""
+    """Gráfico 2: Segmenta o tempo médio de expedição em faixas de horas do ANO SELECIONADO."""
     
     # 1. Cria as faixas de tempo
     bins = [0, 24, 48, 72, np.inf]
@@ -101,21 +102,21 @@ def criar_grafico_2_tempo_segmentado(df_filtrado):
         x='Faixa de Tempo',
         y='Total de Casos',
         color='Faixa de Tempo',
-        title='Distribuição do Tempo de Expedição da Decisão (da MPU)',
+        title=f'Distribuição do Tempo de Expedição da Decisão (da MPU)',
         color_discrete_sequence=['green', 'gold', 'orange', 'red']
     )
     fig.update_layout(xaxis_title="Tempo de Tramitação (Ajuizamento até Decisão)")
     
-    # Adiciona anotação para simular o detalhe da média do Tribunal (Interatividade/Informação)
+    # Adiciona anotação para simular o detalhe da média do Tribunal
     fig.add_annotation(
         text=f"Média Geral de Expedição: **{media_horas:.1f} horas**",
         xref="paper", yref="paper", x=0.5, y=1.05, showarrow=False, font=dict(size=14, color="black")
     )
     
-    return fig, media_horas
+    return fig
 
 def criar_grafico_3_tipos_mpu(df_filtrado):
-    """Mostra a proporção de cada tipo de MPU expedida."""
+    """Gráfico 3: Mostra a proporção de cada tipo de MPU expedida no ANO SELECIONADO."""
     
     # Filtra apenas MPU proferidas/concedidas
     df_proferidas = df_filtrado[df_filtrado['desfecho'] == 'Proferida (Concedida)']
@@ -137,9 +138,9 @@ def criar_grafico_3_tipos_mpu(df_filtrado):
     return fig
 
 def criar_grafico_4_mensal(df_filtrado, ano):
-    """Mostra MPU Pedidas vs. Proferidas ao longo dos meses do ano escolhido."""
+    """Gráfico 4: Mostra MPU Pedidas vs. Proferidas ao longo dos meses do ANO SELECIONADO."""
     
-    # Filtra pelo ano selecionado pelo usuário
+    # O dataframe já está filtrado, mas garante que a visualização seja do ano
     df_mensal = df_filtrado[df_filtrado['ano'] == ano]
     
     # Agrupa por mês e status (pedida/proferida)
@@ -155,7 +156,7 @@ def criar_grafico_4_mensal(df_filtrado, ano):
         x='mes_nome',
         y='Total',
         color='status',
-        title=f'Volume Mensal de MPUs - Pedidos e Resultados ({ano})',
+        title=f'Evolução Mensal de MPUs - Pedidos e Resultados ({ano})',
         markers=True
     )
     fig.update_layout(yaxis_title="Volume de MPUs", xaxis_title="Mês", xaxis={'categoryorder':'array', 'categoryarray': [meses_map[i] for i in range(1, 13)]})
@@ -183,21 +184,22 @@ with st.sidebar:
     st.header("⚙️ Configuração da Análise")
     
     # Seleção de Ano (Filtro 1)
-    anos_disponiveis = sorted(df_dados['ano'].unique())
+    anos_disponiveis = sorted(df_dados['ano'].unique(), reverse=True)
+    # Garante que o usuário escolha entre os anos disponíveis na simulação
     ano_selecionado = st.selectbox(
-        "Selecione o Ano de Ajuizamento para Análise Mensal:",
+        "Selecione o Ano para Análise Detalhada:",
         anos_disponiveis,
-        index=len(anos_disponiveis) - 1 # Seleciona o último ano como padrão
+        index=0 # Seleciona o ano mais recente como padrão
     )
     
-    # Confirmação da Busca
-    if st.button('Gerar Relatório de MPU'):
-        st.success("Relatório de MPU gerado com sucesso!")
+    st.success(f"Analisando o período de **{ano_selecionado}**.")
+
+# 1. Filtra o DataFrame Geral pelo Ano Selecionado
+df_ano_selecionado = df_dados[df_dados['ano'] == ano_selecionado]
 
 st.header(f"Resultados da Jurimetria (Ano {ano_selecionado} em destaque)")
 
 # --- MÉTRICAS CHAVE (KPIs) ---
-df_ano_selecionado = df_dados[df_dados['ano'] == ano_selecionado]
 total_pedidas = len(df_ano_selecionado)
 total_proferidas = len(df_ano_selecionado[df_ano_selecionado['desfecho'] == 'Proferida (Concedida)'])
 taxa_atendimento = (total_proferidas / total_pedidas) * 100 if total_pedidas > 0 else 0
@@ -217,29 +219,28 @@ st.markdown("---")
 
 # --- GRÁFICOS ---
 
-# Gráfico 1: Comparação Anual
+# Gráfico 1: Comparação Anual (Usa TODOS os dados)
 st.subheader("Gráfico 1: Comparação Anual de Pedidos e Proferimentos de MPU")
 fig1 = criar_grafico_1_comparacao_anual(df_dados)
 st.plotly_chart(fig1, use_container_width=True)
 
 st.markdown("---")
 
-# Gráfico 2: Tempo de Expedição
-st.subheader("Gráfico 2: Distribuição do Tempo de Expedição (Horas)")
-# Usa o dataframe filtrado pelo ano para a média
-fig2, media_horas = criar_grafico_2_tempo_segmentado(df_dados) 
+# Gráfico 2: Tempo de Expedição (Usa APENAS os dados do ano selecionado)
+st.subheader(f"Gráfico 2: Distribuição do Tempo de Expedição (Horas) no ano de {ano_selecionado}")
+fig2 = criar_grafico_2_tempo_segmentado(df_ano_selecionado) 
 st.plotly_chart(fig2, use_container_width=True)
 
 st.markdown("---")
 
-# Gráfico 4: Mensal (no layout de colunas para melhor visualização)
+# Gráfico 4: Mensal (Usa APENAS os dados do ano selecionado)
 st.subheader(f"Gráfico 4: Evolução Mensal de Pedidos e Proferimentos (Ano {ano_selecionado})")
 fig4 = criar_grafico_4_mensal(df_dados, ano_selecionado)
 st.plotly_chart(fig4, use_container_width=True)
 
 st.markdown("---")
 
-# Gráfico 3: Proporção dos Tipos
-st.subheader("Gráfico 3: Proporção dos Tipos de Medidas Protetivas Concedidas")
-fig3 = criar_grafico_3_tipos_mpu(df_dados)
+# Gráfico 3: Proporção dos Tipos (Usa APENAS os dados do ano selecionado)
+st.subheader(f"Gráfico 3: Proporção dos Tipos de Medidas Protetivas Concedidas no ano de {ano_selecionado}")
+fig3 = criar_grafico_3_tipos_mpu(df_ano_selecionado)
 st.plotly_chart(fig3, use_container_width=True)

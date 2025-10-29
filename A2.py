@@ -14,12 +14,11 @@ def carregar_dados_simulados():
     Cria um DataFrame que simula o resultado de uma busca massiva na API do CNJ 
     para processos de MPU (Lei Maria da Penha) no TJRJ, incluindo 2023, 2024 e 2025.
     """
-
     data_range = pd.to_datetime(pd.date_range(start='2023-01-01', end='2025-12-31', freq='D'))
     num_registros = 20000 
     
     datas_ajuizamento = np.random.choice(data_range, num_registros)
-
+    
     delta_horas = np.where(
         np.random.rand(num_registros) < 0.7, 
         np.random.randint(1, 48, num_registros),
@@ -30,7 +29,7 @@ def carregar_dados_simulados():
     tipos_mpu = ['Afastamento do Lar', 'Restrição de Contato', 'Suspensão de Posse de Arma', 'Outras']
     desfechos = ['Proferida (Concedida)', 'Não Proferida (Indeferida)', 'Extinta']
     desfechos_finais = ['Condenação', 'Absolvição', 'Arquivamento/Extinção']
-
+    
     df = pd.DataFrame({
         'data_ajuizamento': datas_ajuizamento,
         'data_decisao_mpu': datas_decisao,
@@ -85,16 +84,16 @@ def criar_grafico_4_mensal(df_filtrado, ano):
     APLICA LÓGICA DE ZERAMENTO PARA NOV/DEZ DE 2025.
     """
     df_mensal = df_filtrado[df_filtrado['ano'] == ano]
-
+    
     df_agrupado = df_mensal.groupby(['mes', 'status']).size().reset_index(name='Total')
-
-    if ano == 2025:
+    
+   if ano == 2025:
         mes_limite = 10 
-
+        
         filtro_futuro = df_agrupado['mes'] > mes_limite
-
+        
         df_agrupado.loc[filtro_futuro, 'Total'] = 0
-
+        
     meses_map = {i: datetime.date(2000, i, 1).strftime('%B') for i in range(1, 13)}
     df_agrupado['mes_nome'] = df_agrupado['mes'].map(meses_map)
     
@@ -139,7 +138,7 @@ st.title("🛡️ Analisador Jurimétrico de Medidas Protetivas")
 st.header(f"Tribunal de Justiça do Rio de Janeiro ({NOME_TRIBUNAL})")
 
 st.markdown("---")
--
+
 st.subheader("Selecione o Ano para Análise Detalhada:")
 
 anos_disponiveis = sorted(df_dados['ano'].unique(), reverse=True)
@@ -174,6 +173,7 @@ with col3:
     st.metric(label="Taxa de Atendimento (%)", value=f"{taxa_atendimento:.2f}%")
 
 st.markdown("---")
+
 
 st.subheader(f"1. Evolução Mensal de Pedidos e Resultados ({ano_selecionado})")
 st.caption("Nota: Os meses de Novembro e Dezembro de 2025 estão zerados, pois os dados ainda não estão disponíveis.")

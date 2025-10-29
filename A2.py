@@ -35,12 +35,16 @@ def carregar_dados_simulados():
     tipos_mpu = ['Afastamento do Lar', 'Restrição de Contato', 'Suspensão de Posse de Arma', 'Outras']
     desfechos = ['Proferida (Concedida)', 'Não Proferida (Indeferida)', 'Extinta']
     
+    # Simulação do Desfecho Final para o Funil (Condenação vs. Absolvição/Acordo)
+    desfechos_finais = ['Condenação', 'Absolvição', 'Arquivamento/Extinção']
+    
     # Cria o DataFrame simulado
     df = pd.DataFrame({
         'data_ajuizamento': datas_ajuizamento,
         'data_decisao_mpu': datas_decisao,
         'tipo_mpu_expedida': np.random.choice(tipos_mpu, num_registros, p=[0.55, 0.30, 0.10, 0.05]),
         'desfecho': np.random.choice(desfechos, num_registros, p=[0.85, 0.10, 0.05]),
+        'desfecho_final': np.random.choice(desfechos_finais, num_registros, p=[0.45, 0.10, 0.45]), # Novo dado para o funil
         'ano': pd.to_datetime(datas_ajuizamento).year,
         'mes': pd.to_datetime(datas_ajuizamento).month,
     })
@@ -50,9 +54,7 @@ def carregar_dados_simulados():
     
     return df
 
-# --- 2. FUNÇÕES DE GERAÇÃO DE GRÁFICOS (Gráfico 1 removido, demais renumerados) ---
-
-# A função criar_grafico_1_comparacao_anual foi removida.
+# --- 2. FUNÇÕES DE GERAÇÃO DE GRÁFICOS ---
 
 def criar_grafico_2_tempo_segmentado(df_filtrado):
     """Gráfico 2: Segmenta o tempo médio de expedição em faixas de horas do ANO SELECIONADO."""
@@ -97,6 +99,39 @@ def criar_grafico_4_mensal(df_filtrado, ano):
                   title=f'Evolução Mensal de MPUs - Pedidos e Resultados ({ano})', markers=True)
     fig.update_layout(yaxis_title="Volume de MPUs", xaxis_title="Mês", xaxis={'categoryorder':'array', 'categoryarray': [meses_map[i] for i in range(1, 13)]})
     return fig
+
+def criar_grafico_funil_desfecho(df_filtrado):
+    """Gráfico 5: Cria um Funnel Chart que analisa a taxa de "conversão" do processo."""
+    
+    # 1. Define as métricas do funil com base nos dados simulados
+    total_pedidos = len(df_filtrado)
+    total_concedidas = len(df_filtrado[df_filtrado['desfecho'] == 'Proferida (Concedida)'])
+    
+    # Filtra processos que foram concedidos para análise de desfecho final
+    df_concedidas = df_filtrado[df_filtrado['desfecho'] == 'Proferida (Concedida)']
+    
+    # Contagem dos desfechos finais simulados
+    contagem_desfechos = df_concedidas['desfecho_final'].value_counts()
+    
+    # 2. Cria as etapas do funil
+    desfechos_finais = {
+        '1. Pedido Inicial (MPU)': total_pedidos,
+        '2. MPU Concedida': total_concedidas,
+        '3. Desfecho: Condenação': contagem_desfechos.get('Condenação', 0),
+        '4. Desfecho: Absolvição/Arquivamento': contagem_desfechos.get('Absolvição', 0) + contagem_desfechos.get('Arquivamento/Extinção', 0)
+    }
+    
+    df_funil = pd.DataFrame(list(desfechos_finais.items()), columns=['Etapa', 'Volume'])
+    
+    fig = px.funnel(
+        df_funil, 
+        x='Volume', 
+        y='Etapa',
+        title='Funil de Conversão: Do Pedido de Proteção ao Desfecho Principal'
+    )
+    fig.update_layout(yaxis_title="Etapas do Processo", xaxis_title="Volume de Casos")
+    return fig
+
 
 # --- 3. INTERFACE STREAMLIT ---
 
@@ -151,25 +186,48 @@ with col3:
 
 st.markdown("---")
 
-# --- GRÁFICOS ---
-# NOTA: Os gráficos foram reordenados e renumerados internamente no código para manter a consistência, 
-# mas o título subheader reflete a ordem desejada pelo usuário: Mensal, Tempo e Tipos.
+# --- GRÁFICOS PRINCIPAIS ---
 
-# Gráfico 4 (agora o 1º na exibição): Mensal (Usa APENAS os dados do ano selecionado)
+# Gráfico 1 (Mensal)
 st.subheader(f"1. Evolução Mensal de Pedidos e Resultados ({ano_selecionado})")
 fig4 = criar_grafico_4_mensal(df_dados, ano_selecionado)
 st.plotly_chart(fig4, use_container_width=True)
 
 st.markdown("---")
 
-# Gráfico 2 (agora o 2º na exibição): Tempo de Expedição (Usa APENAS os dados do ano selecionado)
+# Gráfico 2 (Tempo de Expedição)
 st.subheader(f"2. Distribuição do Tempo de Expedição em Horas ({ano_selecionado})")
 fig2 = criar_grafico_2_tempo_segmentado(df_ano_selecionado) 
 st.plotly_chart(fig2, use_container_width=True)
 
 st.markdown("---")
 
-# Gráfico 3 (agora o 3º na exibição): Proporção dos Tipos (Usa APENAS os dados do ano selecionado)
+# Gráfico 3 (Proporção dos Tipos)
 st.subheader(f"3. Proporção dos Tipos de Medidas Protetivas Concedidas ({ano_selecionado})")
 fig3 = criar_grafico_3_tipos_mpu(df_ano_selecionado)
 st.plotly_chart(fig3, use_container_width=True)
+
+st.markdown("---")
+
+# --- NOVO MÓDULO: FUNIL E TABELA INTERATIVA ---
+
+# Gráfico 4 (Funil de Conversão)
+st.subheader(f"4. Funil de Efetividade e Desfecho Final ({ano_selecionado})")
+st.caption("Taxa de Conversão: Do Pedido Inicial até o Resultado da Ação Principal (Simulação)")
+fig_funil = criar_grafico_funil_desfecho(df_ano_selecionado)
+st.plotly_chart(fig_funil, use_container_width=True)
+
+# Tabela Interativa de Detalhamento
+st.markdown("##### Detalhamento Amostral dos Dados de Processos (Tabela Interativa):")
+st.caption("Use esta tabela para filtrar e ordenar dados brutos, simulando o acesso aos metadados processuais.")
+
+# Seleciona as colunas mais relevantes para exibição
+df_tabela = df_ano_selecionado[['data_ajuizamento', 'data_decisao_mpu', 'tipo_mpu_expedida', 'tempo_tramitacao_horas', 'desfecho_final']].copy()
+df_tabela.columns = ['Data Ajuizamento', 'Data Decisão MPU', 'Tipo MPU', 'Tempo (h)', 'Desfecho Final']
+
+# O st.dataframe ou st.data_editor oferece a interatividade de ordenação e filtragem nativa
+st.dataframe(
+    df_tabela,
+    use_container_width=True,
+    height=300 
+)

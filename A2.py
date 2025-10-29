@@ -4,10 +4,13 @@ import plotly.express as px
 import numpy as np
 import datetime
 
+# --- 1. CONFIGURAÇÃO E CARREGAMENTO DE DADOS SIMULADOS ---
 
+# Metadados do Projeto
 NOME_TRIBUNAL = "TJ do Rio de Janeiro (TJRJ)"
 ENDPOINT_SIMULADO = "https://api-publica.datajud.cnj.jus.br/api_publica_tjrj/_search"
 
+# Função que SIMULA a busca na API do CNJ
 @st.cache_data
 def carregar_dados_simulados():
     """
@@ -15,11 +18,13 @@ def carregar_dados_simulados():
     para processos de MPU (Lei Maria da Penha) no TJRJ, incluindo 2023, 2024 e 2025.
     """
     # 1. Definindo dados base para 2023, 2024 e 2025
+    # NOTA: Os dados de 2025 são gerados até 31/12, a lógica de zeramento será aplicada no gráfico.
     data_range = pd.to_datetime(pd.date_range(start='2023-01-01', end='2025-12-31', freq='D'))
     num_registros = 20000 
     
     datas_ajuizamento = np.random.choice(data_range, num_registros)
-
+    
+    # Simulação de tempo de resposta
     delta_horas = np.where(
         np.random.rand(num_registros) < 0.7, 
         np.random.randint(1, 48, num_registros),
@@ -27,17 +32,18 @@ def carregar_dados_simulados():
     )
     datas_decisao = datas_ajuizamento + pd.to_timedelta(delta_horas, unit='H')
 
+    # Tipos de MPU e Desfechos
     tipos_mpu = ['Afastamento do Lar', 'Restrição de Contato', 'Suspensão de Posse de Arma', 'Outras']
     desfechos = ['Proferida (Concedida)', 'Não Proferida (Indeferida)', 'Extinta']
-  
     desfechos_finais = ['Condenação', 'Absolvição', 'Arquivamento/Extinção']
-
+    
+    # Cria o DataFrame simulado
     df = pd.DataFrame({
         'data_ajuizamento': datas_ajuizamento,
         'data_decisao_mpu': datas_decisao,
         'tipo_mpu_expedida': np.random.choice(tipos_mpu, num_registros, p=[0.55, 0.30, 0.10, 0.05]),
         'desfecho': np.random.choice(desfechos, num_registros, p=[0.85, 0.10, 0.05]),
-        'desfecho_final': np.random.choice(desfechos_finais, num_registros, p=[0.45, 0.10, 0.45]), # Novo dado para o funil
+        'desfecho_final': np.random.choice(desfechos_finais, num_registros, p=[0.45, 0.10, 0.45]),
         'ano': pd.to_datetime(datas_ajuizamento).year,
         'mes': pd.to_datetime(datas_ajuizamento).month,
     })
@@ -47,6 +53,7 @@ def carregar_dados_simulados():
     
     return df
 
+# --- 2. FUNÇÕES DE GERAÇÃO DE GRÁFICOS ---
 
 def criar_grafico_2_tempo_segmentado(df_filtrado):
     """Gráfico 2: Segmenta o tempo médio de expedição em faixas de horas do ANO SELECIONADO."""
@@ -81,9 +88,27 @@ def criar_grafico_3_tipos_mpu(df_filtrado):
     return fig
 
 def criar_grafico_4_mensal(df_filtrado, ano):
-    """Gráfico 4: Mostra MPU Pedidas vs. Proferidas ao longo dos meses do ANO SELECIONADO."""
+    """
+    Gráfico 4: Mostra MPU Pedidas vs. Proferidas ao longo dos meses do ANO SELECIONADO.
+    APLICA LÓGICA DE ZERAMENTO PARA NOV/DEZ DE 2025.
+    """
     df_mensal = df_filtrado[df_filtrado['ano'] == ano]
+    
+    # 1. Agrupamento normal
     df_agrupado = df_mensal.groupby(['mes', 'status']).size().reset_index(name='Total')
+    
+    # 2. LÓGICA DE ZERAMENTO PARA 2025 (NOVEMBRO E DEZEMBRO)
+    # Assumimos que Outubro (10) é o último mês completo
+    if ano == 2025:
+        mes_limite = 10 
+        
+        # Cria um filtro para meses > 10
+        filtro_futuro = df_agrupado['mes'] > mes_limite
+        
+        # Zera o total para Novembro (11) e Dezembro (12)
+        df_agrupado.loc[filtro_futuro, 'Total'] = 0
+        
+    # 3. Mapeamento e Plotagem
     meses_map = {i: datetime.date(2000, i, 1).strftime('%B') for i in range(1, 13)}
     df_agrupado['mes_nome'] = df_agrupado['mes'].map(meses_map)
     
@@ -94,14 +119,12 @@ def criar_grafico_4_mensal(df_filtrado, ano):
 
 def criar_grafico_funil_desfecho(df_filtrado):
     """Gráfico 5: Cria um Funnel Chart que analisa a taxa de "conversão" do processo."""
- 
+    
     total_pedidos = len(df_filtrado)
     total_concedidas = len(df_filtrado[df_filtrado['desfecho'] == 'Proferida (Concedida)'])
-   
     df_concedidas = df_filtrado[df_filtrado['desfecho'] == 'Proferida (Concedida)']
-
     contagem_desfechos = df_concedidas['desfecho_final'].value_counts()
-
+    
     desfechos_finais = {
         '1. Pedido Inicial (MPU)': total_pedidos,
         '2. MPU Concedida': total_concedidas,
@@ -121,7 +144,9 @@ def criar_grafico_funil_desfecho(df_filtrado):
     return fig
 
 
+# --- 3. INTERFACE STREAMLIT ---
 
+# Carrega os dados uma única vez
 df_dados = carregar_dados_simulados()
 
 st.set_page_config(layout="wide")
@@ -131,6 +156,7 @@ st.header(f"Tribunal de Justiça do Rio de Janeiro ({NOME_TRIBUNAL})")
 
 st.markdown("---")
 
+# --- SELETOR DE ANO ---
 st.subheader("Selecione o Ano para Análise Detalhada:")
 
 anos_disponiveis = sorted(df_dados['ano'].unique(), reverse=True)
@@ -138,7 +164,7 @@ anos_disponiveis = sorted(df_dados['ano'].unique(), reverse=True)
 ano_selecionado = st.radio(
     "Escolha o período para focar a análise:",
     anos_disponiveis,
-    index=0, # 2025 será o padrão
+    index=0, 
     horizontal=True
 )
 
@@ -146,9 +172,11 @@ df_ano_selecionado = df_dados[df_dados['ano'] == ano_selecionado]
 
 st.markdown("---")
 
+# Título do Relatório (dinâmico)
 st.subheader(f"Relatório Detalhado de Efetividade da Lei Maria da Penha (Ano {ano_selecionado})")
 
 
+# --- MÉTRICAS CHAVE (KPIs) ---
 total_pedidas = len(df_ano_selecionado)
 total_proferidas = len(df_ano_selecionado[df_ano_selecionado['desfecho'] == 'Proferida (Concedida)'])
 taxa_atendimento = (total_proferidas / total_pedidas) * 100 if total_pedidas > 0 else 0
@@ -166,31 +194,37 @@ with col3:
 
 st.markdown("---")
 
+# --- GRÁFICOS PRINCIPAIS ---
 
+# Gráfico 1 (Mensal) - Corresponde ao antigo Gráfico 4
 st.subheader(f"1. Evolução Mensal de Pedidos e Resultados ({ano_selecionado})")
+st.caption("Nota: Os meses de Novembro e Dezembro de 2025 estão zerados, pois os dados ainda não estão disponíveis.")
 fig4 = criar_grafico_4_mensal(df_dados, ano_selecionado)
 st.plotly_chart(fig4, use_container_width=True)
 
 st.markdown("---")
 
+# Gráfico 2 (Tempo de Expedição)
 st.subheader(f"2. Distribuição do Tempo de Expedição em Horas ({ano_selecionado})")
 fig2 = criar_grafico_2_tempo_segmentado(df_ano_selecionado) 
 st.plotly_chart(fig2, use_container_width=True)
 
 st.markdown("---")
 
+# Gráfico 3 (Proporção dos Tipos)
 st.subheader(f"3. Proporção dos Tipos de Medidas Protetivas Concedidas ({ano_selecionado})")
 fig3 = criar_grafico_3_tipos_mpu(df_ano_selecionado)
 st.plotly_chart(fig3, use_container_width=True)
 
 st.markdown("---")
 
-
+# Gráfico 4 (Funil de Conversão) - Corresponde ao novo Gráfico 5
 st.subheader(f"4. Funil de Efetividade e Desfecho Final ({ano_selecionado})")
-st.caption("Taxa de Conversão: Do Pedido Inicial até o Resultado da Ação Principal (Simulação)")
+st.caption("Taxa de Conversão: Do Pedido de Proteção à Sentença na Ação Principal (Simulação)")
 fig_funil = criar_grafico_funil_desfecho(df_ano_selecionado)
 st.plotly_chart(fig_funil, use_container_width=True)
 
+# Tabela Interativa de Detalhamento
 st.markdown("##### Detalhamento Amostral dos Dados de Processos (Tabela Interativa):")
 st.caption("Use esta tabela para filtrar e ordenar dados brutos, simulando o acesso aos metadados processuais.")
 

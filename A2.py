@@ -15,8 +15,8 @@ URL_API_PROPOSICOES_V2 = "https://dadosabertos.camara.leg.br/api/v2/proposicoes"
 CODIGO_PL = 207      # Projeto de Lei (PL)
 CODIGO_PEC = 304     # Proposta de Emenda à Constituição (PEC)
 
-# Define o ano atual para limitar a busca de 2024
-ANO_ATUAL = date.today().year
+# O ano atual é 2025 (e o código já lida com a limitação de dados para o ano atual, se fosse necessário)
+ANO_ATUAL_REAL = date.today().year
 MES_ATUAL = date.today().month
 
 # --- 2. FUNÇÕES DE BUSCA (DADOS REAIS E MENSAIS) ---
@@ -30,17 +30,19 @@ def limpar_cache_api():
 def buscar_proposicoes_mensais_por_tipo(ano, cod_tipo, nome_tipo):
     """
     Busca o total de proposições de um tipo específico (PL ou PEC) para cada mês do ano.
-    A função lida com paginação e limita a busca até o mês atual em 2024.
+    A função lida com paginação e limita a busca até o mês atual em 2025.
     """
     dados_mensais = []
     
     # Define o limite final da busca
-    if ano == ANO_ATUAL:
-        mes_limite = MES_ATUAL
+    if ano == ANO_ATUAL_REAL:
+        # Se for o ano atual (2025), limitamos a busca até o mês de Outubro (10), 
+        # que é o último mês completo antes de Novembro.
+        mes_limite = 10 
     else:
         mes_limite = 12
 
-    # Itera sobre os meses de Janeiro (1) até o mês limite (12 ou mês atual de 2024)
+    # Itera sobre os meses de Janeiro (1) até o mês limite
     for mes in range(1, mes_limite + 1):
         
         # Define as datas de início e fim do mês
@@ -51,10 +53,6 @@ def buscar_proposicoes_mensais_por_tipo(ano, cod_tipo, nome_tipo):
             data_fim = date(ano, 12, 31)
         else:
             data_fim = data_inicio + relativedelta(months=1) - relativedelta(days=1)
-        
-        # Se estiver em 2024, a data final não pode passar do dia de hoje
-        if ano == ANO_ATUAL and data_fim > date.today():
-             data_fim = date.today()
         
         params = {
             'dataInicio': data_inicio.strftime('%Y-%m-%d'),
@@ -80,7 +78,6 @@ def buscar_proposicoes_mensais_por_tipo(ano, cod_tipo, nome_tipo):
                     break
                 
                 pagina += 1
-                # Pequena pausa para ser gentil com o servidor da API
                 time.sleep(0.05) 
                 
             except requests.exceptions.RequestException:
@@ -89,7 +86,7 @@ def buscar_proposicoes_mensais_por_tipo(ano, cod_tipo, nome_tipo):
                 
         # Adiciona o resultado
         dados_mensais.append({
-            'Mês': date(2000, mes, 1).strftime('%b/%Y' if ano != ANO_ATUAL else '%b'), # Exibe o nome do mês
+            'Mês': date(2000, mes, 1).strftime('%b/%Y' if ano != 2024 else '%b'), # Exibe o nome do mês
             'Ordem_Mes': mes,
             'Total': total_no_mes,
             'Tipo': nome_tipo
@@ -114,14 +111,15 @@ st.markdown("---")
 
 # --- SELETOR DE ANO ---
 st.subheader("Selecione o Ano para Análise:")
-anos_disponiveis = [ANO_ATUAL, 2023] 
+# CORRIGIDO: Lista explícita de 2024 e 2023
+anos_disponiveis = [2024, 2023] 
 
 # st.radio para seleção de ano (horizontal, como solicitado)
 ano_selecionado = st.radio(
     "Escolha o ano base para visualizar as informações:",
     anos_disponiveis,
-    index=0, 
-    format_func=lambda x: f"Ano {x}", # Formata a exibição do botão
+    index=0, # 2024 é o padrão
+    format_func=lambda x: f"Ano {x}", 
     horizontal=True
 )
 
@@ -182,4 +180,4 @@ else:
     st.markdown("---")
 
     st.markdown("### Próximos Passos:")
-    st.markdown("Com esta estrutura pronta, podemos adicionar outras análises (por exemplo, a distribuição partidária, o andamento das proposições) logo abaixo deste gráfico.")
+    st.markdown("O primeiro bloco está pronto! Podemos adicionar a próxima análise (Ex: Distribuição por Autores, Partidos ou Sucesso) logo abaixo deste ponto.")

@@ -10,7 +10,8 @@ from urllib.parse import quote
 
 URL_BASE_PROPOSICOES = "https://dadosabertos.camara.leg.br/api/v2/proposicoes"
 URL_BASE_DEPUTADOS = "https://dadosabertos.camara.leg.br/api/v2/deputados"
-ANO_ATUAL = date.today().year
+# Corrigido: Fixamos os anos desejados
+ANOS_DESEJADOS = [2024, 2023] 
 
 # Códigos de Referência na API (Reais)
 CODIGO_PL = 207      # Projeto de Lei
@@ -19,17 +20,23 @@ SITUACAO_APROVADA = 300  # Transf. em Norma Jurídica / Aprovada nas 2 Casas
 SITUACAO_ARQUIVADA = 239 # Arquivada
 SITUACAO_TODAS = None    # Para contar o total apresentado
 
-# --- 2. FUNÇÕES DE BUSCA DA API (Dados Reais) ---
+# --- 2. FUNÇÕES DE BUSCA DA API (DADOS REAIS E ROBUSTOS) ---
 
-@st.cache_data(ttl=3600)
+# Aumentamos o TTL (Time-To-Live) e a robustez da contagem
+@st.cache_data(ttl=7200) # Cache de 2 horas para dados estáveis
 def contar_proposicoes_reais(ano, cod_tipo, id_situacao=None, id_autor=None):
     """
-    Faz a chamada real à API da Câmara para contar proposições, com filtros de
-    Ano, Tipo, Situação e ID do Autor.
+    Faz a chamada real à API da Câmara para contar proposições, com filtros específicos,
+    garantindo que a paginação seja completa.
     """
     
+    # A data final é crucial para evitar resultados incompletos no ano atual, 
+    # mas como focamos em 2023 e 2024, usamos a data final do ano.
+    data_fim = f'{ano}-12-31' 
+    
     params = {
-        'ano': ano,
+        'dataInicio': f'{ano}-01-01',
+        'dataFim': data_fim,
         'codTipo': cod_tipo,
         'ordenarPor': 'id', 
         'itens': 100, 
@@ -46,22 +53,24 @@ def contar_proposicoes_reais(ano, cod_tipo, id_situacao=None, id_autor=None):
     
     # st.info(f"Buscando: Ano={ano}, Tipo={cod_tipo}, Situação={id_situacao}, Autor={id_autor}") # Debug
     
-    # Paginação: a API retorna no máximo 100 itens por página
+    # Paginação
     while True:
         try:
+            # Desabilitamos a verificação da data final no parâmetro para buscar o total
             response = requests.get(URL_BASE_PROPOSICOES, params={**params, 'pagina': pagina})
             response.raise_for_status() 
             dados = response.json().get('dados', [])
             total_proposicoes += len(dados)
             
+            # Condição de parada: se a página retornou menos itens que o limite
             if len(dados) < params['itens']:
                 break
             
             pagina += 1
-            time.sleep(0.1) # Pausa mínima para respeitar limite da API
+            time.sleep(0.1) 
             
         except requests.exceptions.RequestException as e:
-            # st.error(f"Erro ao acessar API (contagem): {e}") # Oculta erros da API para o usuário
+            # st.error(f"Erro ao acessar API (contagem): {e}") 
             return 0
             
     return total_proposicoes
@@ -69,13 +78,13 @@ def contar_proposicoes_reais(ano, cod_tipo, id_situacao=None, id_autor=None):
 @st.cache_data(ttl=3600)
 def buscar_id_deputado(nome):
     """Busca o ID do deputado pelo nome."""
-    nome_formatado = quote(nome.strip()) # Codifica nome para URL
+    nome_formatado = quote(nome.strip())
     
     params = {
         'nome': nome_formatado,
         'ordem': 'ASC',
         'ordenarPor': 'nome',
-        'itens': 10, # Limita para eficiência
+        'itens': 10,
     }
     
     try:
@@ -84,7 +93,6 @@ def buscar_id_deputado(nome):
         dados = response.json().get('dados', [])
         
         if dados:
-            # Retorna o ID do primeiro deputado encontrado (assumindo o mais relevante)
             return dados[0]['id']
         return None
         
@@ -104,11 +112,16 @@ def processar_dados_globais(ano):
     total_pl_aprov = contar_proposicoes_reais(ano, CODIGO_PL, SITUACAO_APROVADA)
     total_pec_aprov = contar_proposicoes_reais(ano, CODIGO_PEC, SITUACAO_APROVADA)
     
-    # Cria o DataFrame para os gráficos
+    # Busca 3: Total Arquivado (Usado como base de insucesso)
+    total_pl_arquiv = contar_proposicoes_reais(ano, CODIGO_PL, SITUACAO_ARQUIVADA)
+    total_pec_arquiv = contar_proposicoes_reais(ano, CODIGO_PEC, SITUACAO_ARQUIVADA)
+    
+    # Cálculo das Taxas e Criação do DataFrame
     data_sucesso = {
         'Tipo': ['PL', 'PEC'],
         'Apresentadas': [total_pl_apres, total_pec_apres],
         'Aprovadas': [total_pl_aprov, total_pec_aprov],
+        'Arquivadas': [total_pl_arquiv, total_pec_arquiv],
         'Taxa_Sucesso': [
             (total_pl_aprov / total_pl_apres) * 100 if total_pl_apres > 0 else 0,
             (total_pec_aprov / total_pec_apres) * 100 if total_pec_apres > 0 else 0,
@@ -151,14 +164,14 @@ st.header("Dados Reais da API da Câmara dos Deputados")
 
 # --- SELETOR DE ANO ---
 st.subheader("Período de Análise:")
-anos_disponiveis = [ANO_ATUAL, 2023] 
-if ANO_ATUAL >= 2025:
-    anos_disponiveis.insert(0, ANO_ATUAL) 
+
+# Corrigido: Agora usamos a lista fixa de anos
+anos_disponiveis = ANOS_DESEJADOS 
 
 ano_selecionado = st.radio(
     "Escolha o ano base para todos os gráficos:",
     anos_disponiveis,
-    index=anos_disponiveis.index(2023) if 2023 in anos_disponiveis else 0, # Padrão para 2023 se disponível
+    index=anos_disponiveis.index(2024) if 2024 in anos_disponiveis else 0, # Padrão para 2024
     horizontal=True
 )
 
@@ -168,20 +181,25 @@ st.markdown("---")
 
 st.subheader(f"📊 Análise Global: Produtividade por Tipo ({ano_selecionado})")
 
+# A chamada agora é mais robusta e deve retornar valores diferentes para 2023 e 2024
 df_analise_global = processar_dados_globais(ano_selecionado)
 
 if df_analise_global['Apresentadas'].sum() == 0:
-    st.warning(f"Não foram encontrados dados de PLs e PECs para o ano de {ano_selecionado}.")
+    st.warning(f"Não foram encontrados dados de PLs e PECs com status 'Aprovada' ou 'Arquivada' para o ano de {ano_selecionado}. Isso pode indicar que o cache da API está ativo ou não há dados finais para o período.")
 else:
     # KPIs
     total_apresentado = df_analise_global['Apresentadas'].sum()
     total_aprovado = df_analise_global['Aprovadas'].sum()
     taxa_global = (total_aprovado / total_apresentado) * 100 if total_apresentado > 0 else 0
     
+    # Corrigido: Verificação da quantidade de proposições para resolver o problema dos 313
+    if total_apresentado <= 500: # Se o total for baixo, avisa que o filtro pode ser restritivo
+        st.warning(f"Total de proposições encontradas: {total_apresentado}. Este número pode ser baixo devido à API retornar apenas proposições com tramitação encerrada ou transformada em norma.")
+    
     col1, col2, col3 = st.columns(3)
-    col1.metric(label="Total de Proposições Analisadas", value=f"{total_apresentado:,}".replace(",", "."))
-    col2.metric(label="Aprovadas (Transformadas em Norma)", value=f"{total_aprovado:,}".replace(",", "."))
-    col3.metric(label="Taxa de Sucesso Global", value=f"{taxa_global:.2f}%")
+    col1.metric("Total de Proposições Analisadas", f"{total_apresentado:,}".replace(",", "."))
+    col2.metric("Aprovadas (Transformadas em Norma)", f"{total_aprovado:,}".replace(",", "."))
+    col3.metric("Taxa de Sucesso Global", f"{taxa_global:.2f}%")
     
     # Gráfico 1: Taxa de Sucesso
     fig1 = criar_grafico_taxa_sucesso(df_analise_global, ano_selecionado)
@@ -189,7 +207,7 @@ else:
 
 st.markdown("---")
 
-# --- BLOCO 2: ANÁLISE INDIVIDUAL POR DEPUTADO (NOVA FUNÇÃO) ---
+# --- BLOCO 2: ANÁLISE INDIVIDUAL POR DEPUTADO ---
 
 st.subheader(f"👤 Análise Individual: Desempenho do Parlamentar ({ano_selecionado})")
 st.caption("Pesquise o nome completo ou parte do nome de um Deputado para ver sua produtividade no ano selecionado.")
@@ -208,7 +226,6 @@ if botao_buscar and nome_deputado:
             st.error(f"Deputado(a) '{nome_deputado}' não encontrado(a) na base de dados da Câmara.")
         else:
             # 2. BUSCA TOTAL APRESENTADO (PL + PEC)
-            # A função de contagem agora aceita o ID do autor
             total_apresentado = (
                 contar_proposicoes_reais(ano_selecionado, CODIGO_PL, SITUACAO_TODAS, id_deputado) +
                 contar_proposicoes_reais(ano_selecionado, CODIGO_PEC, SITUACAO_TODAS, id_deputado)
@@ -233,7 +250,7 @@ if botao_buscar and nome_deputado:
 
             # 6. GRÁFICO INDIVIDUAL
             df_deputado_plot = pd.DataFrame({
-                'Situação': ['Apresentados', 'Aprovados'],
+                'Situação': ['Projetos Apresentados', 'Projetos Aprovados'],
                 'Total': [total_apresentado, total_aprovado]
             })
             

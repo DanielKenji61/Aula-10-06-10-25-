@@ -11,23 +11,71 @@ from dateutil.relativedelta import relativedelta
 # Endpoint da API REST v2 da Câmara dos Deputados
 URL_API_PROPOSICOES_V2 = "https://dadosabertos.camara.leg.br/api/v2/proposicoes"
 
-# Códigos de Tipos de Proposição para o filtro da API
-CODIGO_PEC = 304     # Proposta de Emenda à Constituição (PEC)
+# Código ÚNICO para Proposta de Emenda à Constituição (PEC)
+CODIGO_PEC = 304     
 
-# O ano e mês atual (para limitar a busca do ano corrente)
+# Códigos de Situação (Usados para o Gráfico de Pizza)
+SITUACAO_APROVADA = 300  # Transf. em Norma Jurídica / Aprovada nas 2 Casas
+SITUACAO_ARQUIVADA = 239 # Arquivada
+
+# O ano e mês atual
 ANO_ATUAL_REAL = date.today().year
 MES_ATUAL = date.today().month
 
-# --- 2. FUNÇÕES DE BUSCA (DADOS REAIS E MENSAIS) ---
+# --- 2. FUNÇÕES DE BUSCA (DADOS REAIS DA API) ---
 
 def limpar_cache_api():
     """Limpa o cache do Streamlit e reinicia a execução."""
     st.cache_data.clear()
     st.rerun()
 
-# --- FUNÇÕES PARA SEÇÃO 1 (Gráfico Mensal) ---
+@st.cache_data(ttl=3600) 
+def contar_pecs_por_situacao(ano, id_situacao=None):
+    """
+    Busca o total de PECs com uma situação final específica (Aprovadas, Arquivadas, ou Total Apresentado).
+    Esta função é mais eficiente porque não busca todos os meses.
+    """
+    
+    data_inicio = f'{ano}-01-01'
+    data_fim = f'{ano}-12-31'
+    
+    if ano == ANO_ATUAL_REAL:
+        data_fim = date.today().strftime('%Y-%m-%d')
+    
+    params = {
+        'dataInicio': data_inicio,
+        'dataFim': data_fim,
+        'codTipo': CODIGO_PEC,
+        'ordenarPor': 'id',
+        'itens': 100, 
+    }
+    
+    if id_situacao is not None:
+        params['idSituacao'] = id_situacao
+        
+    total_proposicoes = 0
+    pagina = 1
+    
+    # Lógica de paginação para contar o total
+    while True:
+        try:
+            response = requests.get(URL_API_PROPOSICOES_V2, params={**params, 'pagina': pagina}, timeout=10)
+            response.raise_for_status() 
+            dados = response.json().get('dados', [])
+            total_proposicoes += len(dados)
+            
+            if len(dados) < params['itens']:
+                break
+            
+            pagina += 1
+            time.sleep(0.05) 
+            
+        except requests.exceptions.RequestException:
+            return 0
+            
+    return total_proposicoes
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600) 
 def buscar_pecs_mensais(ano):
     """
     Busca o total de PECs para cada mês do ano. (Para o Gráfico 1)
@@ -87,95 +135,7 @@ def buscar_pecs_mensais(ano):
             
     return pd.DataFrame(dados_mensais)
 
-# --- NOVAS FUNÇÕES PARA SEÇÃO 2 (Gráfico de Pizza Partidário) ---
-
-@st.cache_data(ttl=3600)
-def buscar_ids_pecs_para_analise(ano):
-    """
-    Busca TODOS os IDs de PECs para o ano, em uma única lista paginada.
-    """
-    data_inicio = f'{ano}-01-01'
-    data_fim = f'{ano}-12-31'
-    
-    if ano == ANO_ATUAL_REAL:
-        data_fim = date.today().strftime('%Y-%m-%d')
-    
-    params = {
-        'dataInicio': data_inicio,
-        'dataFim': data_fim,
-        'codTipo': CODIGO_PEC,
-        'ordenarPor': 'id',
-        'itens': 100, 
-    }
-    
-    lista_ids = []
-    pagina = 1
-    
-    while True:
-        try:
-            response = requests.get(URL_API_PROPOSICOES_V2, params={**params, 'pagina': pagina}, timeout=10)
-            response.raise_for_status() 
-            dados = response.json().get('dados', [])
-            
-            if not dados:
-                break
-                
-            lista_ids.extend([d['id'] for d in dados])
-            
-            if len(dados) < params['itens']:
-                break
-            
-            pagina += 1
-            time.sleep(0.05)
-            
-        except requests.exceptions.RequestException:
-            break
-            
-    return lista_ids
-
-@st.cache_data(ttl=3600)
-def processar_autoria_por_partido(lista_ids):
-    """
-    Faz a chamada individual para cada PEC (ID) e extrai o partido do primeiro autor.
-    """
-    dados_autoria = []
-    
-    for id_pec in lista_ids:
-        try:
-            # Endpoint de detalhe da proposição
-            url_detalhe = f"{URL_API_PROPOSICOES_V2}/{id_pec}"
-            response = requests.get(url_detalhe, timeout=5)
-            response.raise_for_status()
-            detalhe = response.json()
-            
-            # Tenta encontrar o autor principal (deputado)
-            autores = detalhe.get('autores', [])
-            
-            if autores:
-                # O primeiro autor é geralmente o principal proponente
-                autor_principal = autores[0]
-                
-                # Extrai a sigla do partido, se for um deputado (tipo 1002 - Deputado)
-                if autor_principal.get('tipoAutor') == 'Deputado':
-                     sigla_partido = autor_principal.get('siglaPartido')
-                     
-                     if sigla_partido:
-                          dados_autoria.append({'Partido': sigla_partido, 'Total': 1})
-            
-            time.sleep(0.05) # Pausa crucial entre chamadas individuais
-            
-        except requests.exceptions.RequestException:
-            continue
-            
-    if not dados_autoria:
-        return pd.DataFrame()
-        
-    df_autoria = pd.DataFrame(dados_autoria)
-    # Agrupa e conta o total por partido
-    return df_autoria.groupby('Partido').sum().reset_index()
-
-
-# --- 4. INTERFACE STREAMLIT PRINCIPAL ---
+# --- 3. INTERFACE STREAMLIT PRINCIPAL ---
 
 st.set_page_config(layout="wide", page_title="Análise de PECs - Câmara dos Deputados")
 
@@ -194,7 +154,6 @@ st.markdown("---")
 st.subheader("Selecione o Ano para Análise:")
 anos_disponiveis = [2024, 2023] 
 
-# st.radio para seleção de ano (horizontal, como solicitado)
 ano_selecionado = st.radio(
     "Escolha o ano base para visualizar as informações:",
     anos_disponiveis,
@@ -209,78 +168,92 @@ st.markdown("---")
 # SEÇÃO 1: GRÁFICO MENSAL (Volume de Propostas)
 # =========================================================================
 
-# BUSCA E PROCESSAMENTO DE DADOS PARA GRÁFICO MENSAL
 with st.spinner(f'Buscando dados mensais reais da API para PECs de {ano_selecionado}...'):
     df_pec_mensal = buscar_pecs_mensais(ano_selecionado)
 
+if df_pec_mensal.empty or df_pec_mensal['Total'].sum() == 0:
+    st.error(f"Não há registros de PECs para {ano_selecionado} na base de dados da API ou houve falha na conexão.")
+    st.stop() # Interrompe a execução se não houver dados
 
-# --- EXIBIÇÃO DE GRÁFICOS E DADOS DA SEÇÃO 1 ---
+total_pec_anual = df_pec_mensal['Total'].sum()
 
 st.subheader(f"1. Volume Mensal de Emendas à Constituição (PECs) em {ano_selecionado}")
-st.caption("Gráfico de Barras: Número de PECs apresentadas por mês.")
+st.caption("Gráfico de Barras: Número de Propostas de Emenda à Constituição (PECs) apresentadas por mês.")
 
-if df_pec_mensal.empty or df_pec_mensal['Total'].sum() == 0:
-    st.info(f"Não há registros de Propostas de Emenda à Constituição (PECs) para {ano_selecionado} na base de dados da API.")
-else:
-    df_pec_mensal = df_pec_mensal.sort_values(by='Ordem_Mes')
-    total_pec_anual = df_pec_mensal['Total'].sum()
-    
-    fig_pec_mensal = px.bar(
-        df_pec_mensal,
-        x='Mês',
-        y='Total',
-        color_discrete_sequence=['red'], 
-        title=f'PECs Apresentadas Mês a Mês em {ano_selecionado}',
-        labels={'Total': 'Número de PECs', 'Mês': 'Mês de Apresentação'},
-    )
-    fig_pec_mensal.update_layout(
-        xaxis={'categoryorder': 'array', 'categoryarray': df_pec_mensal['Mês'].unique()},
-        yaxis={'title': 'Número de PECs'}
-    )
-    st.plotly_chart(fig_pec_mensal, use_container_width=True)
+df_pec_mensal = df_pec_mensal.sort_values(by='Ordem_Mes')
 
-    # Métrica
-    st.metric(f"Total Acumulado de PECs em {ano_selecionado}:", f"{total_pec_anual:,}".replace(",", "."))
+fig_pec_mensal = px.bar(
+    df_pec_mensal,
+    x='Mês',
+    y='Total',
+    color_discrete_sequence=['red'], 
+    title=f'PECs Apresentadas Mês a Mês em {ano_selecionado}',
+    labels={'Total': 'Número de PECs', 'Mês': 'Mês de Apresentação'},
+)
+fig_pec_mensal.update_layout(
+    xaxis={'categoryorder': 'array', 'categoryarray': df_pec_mensal['Mês'].unique()},
+    yaxis={'title': 'Número de PECs'}
+)
+st.plotly_chart(fig_pec_mensal, use_container_width=True)
+
+st.metric(f"Total Acumulado de PECs em {ano_selecionado}:", f"{total_pec_anual:,}".replace(",", "."))
 
 st.markdown("---")
 
 # =========================================================================
-# SEÇÃO 2: GRÁFICO DE PIZZA POR PARTIDO (Autoria)
+# SEÇÃO 2: GRÁFICO DE PIZZA (Sucesso vs. Insucesso)
 # =========================================================================
 
-st.subheader(f"2. Distribuição da Autoria das PECs por Partido em {ano_selecionado}")
-st.caption("Análise Jurimétrica: O gráfico demonstra quais siglas partidárias propuseram mais Propostas de Emenda à Constituição.")
+st.subheader(f"2. Taxa de Sucesso: PECs Aprovadas vs. Não Aprovadas em {ano_selecionado}")
+st.caption("Análise de efetividade jurídica: Aprovadas (Transf. em Norma) ou Arquivadas/Outras Situações.")
 
-if df_pec_mensal.empty or df_pec_mensal['Total'].sum() == 0:
-    st.info("Não é possível realizar a análise partidária sem as proposições da Seção 1.")
-else:
-    # 1. BUSCA DE TODOS OS IDs PARA O ANO
-    lista_ids = buscar_ids_pecs_para_analise(ano_selecionado)
+# 1. BUSCA DE DADOS REAIS PARA A PIZZA
+with st.spinner("Buscando dados de aprovação e arquivamento..."):
+    # Total Aprovado (Sucesso)
+    total_aprovado = contar_pecs_por_situacao(ano_selecionado, SITUACAO_APROVADA)
     
-    # 2. PROCESSAMENTO DE AUTORIA (CHAMADAS INDIVIDUAIS)
-    with st.spinner(f"Processando a autoria de {len(lista_ids)} PECs. Isso pode levar alguns segundos devido às chamadas individuais à API..."):
-        df_autoria_partido = processar_autoria_por_partido(lista_ids)
+    # Total Arquivado
+    total_arquivado = contar_pecs_por_situacao(ano_selecionado, SITUACAO_ARQUIVADA)
 
-    # 3. EXIBIÇÃO
-    if df_autoria_partido.empty:
-        st.warning("Não foi possível extrair dados de autoria (partido) para as PECs encontradas.")
-    else:
-        # Gráfico de Pizza
-        fig_pizza_partido = px.pie(
-            df_autoria_partido,
-            values='Total',
-            names='Partido',
-            title='Propostas de PECs por Partido (Autoria Principal)',
-            hole=.5,
-            color_discrete_sequence=px.colors.qualitative.Alphabet
-        )
-        fig_pizza_partido.update_traces(textinfo='percent+label', pull=[0.1 if p == df_autoria_partido['Partido'].iloc[0] else 0 for p in df_autoria_partido['Partido']])
-        st.plotly_chart(fig_pizza_partido, use_container_width=True)
+# 2. CALCULA O QUE ESTÁ 'EM ABERTO/TRAMITAÇÃO'
+# PECs em Tramitação/Outras Situações = Total Apresentado - Aprovadas - Arquivadas
+total_em_aberto = total_pec_anual - total_aprovado - total_arquivado
 
-        # Tabela de Detalhamento
-        st.markdown("##### Tabela de Contagem por Sigla:")
-        st.dataframe(df_autoria_partido.sort_values(by='Total', ascending=False), use_container_width=True, hide_index=True)
+# Garante que não há número negativo
+if total_em_aberto < 0:
+    total_em_aberto = 0
+
+# 3. CRIA O DATAFRAME PARA O GRÁFICO DE PIZZA
+df_situacao = pd.DataFrame({
+    'Situação': ['Aprovada (Sucesso)', 'Arquivada/Rejeitada', 'Em Tramitação/Outras'],
+    'Total': [total_aprovado, total_arquivado, total_em_aberto]
+})
+
+# Remove linhas com zero para não poluir o gráfico
+df_situacao = df_situacao[df_situacao['Total'] > 0]
+
+# 4. GRÁFICO DE PIZZA
+if df_situacao.empty:
+    st.info("Não foi possível contabilizar as situações finais. Dados insuficientes para o gráfico de pizza.")
+else:
+    fig_pizza_situacao = px.pie(
+        df_situacao,
+        values='Total',
+        names='Situação',
+        title=f'Situação Final das PECs Apresentadas em {ano_selecionado}',
+        hole=.5,
+        color_discrete_map={
+            'Aprovada (Sucesso)': 'green',
+            'Arquivada/Rejeitada': 'darkred',
+            'Em Tramitação/Outras': 'gray'
+        }
+    )
+    st.plotly_chart(fig_pizza_situacao, use_container_width=True)
+
+    # Tabela de Detalhamento
+    st.markdown("##### Tabela de Contagem por Situação Final:")
+    st.dataframe(df_situacao, use_container_width=True, hide_index=True)
+
 
 st.markdown("---")
-st.markdown("### Próximos Passos:")
-st.markdown("Com a autoria concluída, podemos focar na **situação atual das PECs** (ex: Taxa de sucesso ou arquivamento).")
+st.success("As duas seções principais do seu projeto de Jurimetria estão completas e rodam com dados reais da API da Câmara!")

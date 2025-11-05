@@ -9,95 +9,27 @@ from dateutil.relativedelta import relativedelta
 # --- 1. CONFIGURAÇÃO E VARIÁVEIS GLOBAIS ---
 
 URL_API_PROPOSICOES_V2 = "https://dadosabertos.camara.leg.br/api/v2/proposicoes"
-CODIGO_PEC = 304     
+CODIGO_PEC = 304     # Código para Proposta de Emenda à Constituição
 SITUACAO_APROVADA_FINAL = 300 
-SITUACAO_ARQUIVADA = 239      
 
 ANO_ATUAL_REAL = date.today().year
 MES_ATUAL = date.today().month
 
-# --- 2. FUNÇÕES DE BUSCA (DADOS REAIS DA API) ---
+# --- 2. FUNÇÕES DE BUSCA (REAPROVEITAMENTO E NOVAS) ---
 
 def limpar_cache_api():
     """Limpa o cache do Streamlit e reinicia a execução."""
     st.cache_data.clear()
     st.rerun()
 
-# [Funções existentes: contar_pecs_por_situacao e buscar_pecs_mensais - MANTIDAS INALTERADAS]
-# ... [O código dessas funções deve ser copiado do bloco anterior para o seu arquivo app.py] ...
-# Devido ao tamanho, vou apenas incluir as novas funções, pressupondo que as funções de busca anteriores estão no seu app.py
-
 @st.cache_data(ttl=3600) 
-def buscar_pecs_mensais(ano):
+def contar_pecs_por_situacao(ano, id_situacao=None, buscar_ids=False):
     """
-    Busca o total de PECs para cada mês do ano. (Para o Gráfico 1)
+    Busca o total de PECs com ou sem filtro de situação.
+    Se 'buscar_ids' for True, retorna a lista de IDs para amostragem.
     """
-    dados_mensais = []
-    nome_tipo = 'Emenda à Constituição (PEC)'
-    
-    if ano == ANO_ATUAL_REAL:
-        mes_limite = MES_ATUAL 
-    else:
-        mes_limite = 12
-
-    for mes in range(1, mes_limite + 1):
-        
-        data_inicio = date(ano, mes, 1)
-        
-        if mes == MES_ATUAL and ano == ANO_ATUAL_REAL:
-             data_fim = date.today()
-        elif mes == 12:
-            data_fim = date(ano, 12, 31)
-        else:
-            data_fim = data_inicio + relativedelta(months=1) - relativedelta(days=1)
-        
-        params = {
-            'dataInicio': data_inicio.strftime('%Y-%m-%d'),
-            'dataFim': data_fim.strftime('%Y-%m-%d'),
-            'codTipo': CODIGO_PEC,
-            'ordenarPor': 'id',
-            'itens': 100, 
-        }
-        
-        total_no_mes = 0
-        pagina = 1
-        
-        while True:
-            try:
-                response = requests.get(URL_API_PROPOSICOES_V2, params={**params, 'pagina': pagina}, timeout=10)
-                response.raise_for_status() 
-                dados = response.json().get('dados', [])
-                total_no_mes += len(dados)
-                
-                if len(dados) < params['itens']:
-                    break
-                
-                pagina += 1
-                time.sleep(0.05) 
-                
-            except requests.exceptions.RequestException:
-                break 
-                
-        dados_mensais.append({
-            'Mês': date(2000, mes, 1).strftime('%b/%Y' if ano != 2024 else '%b'), 
-            'Ordem_Mes': mes,
-            'Total': total_no_mes,
-            'Tipo': nome_tipo
-        })
-            
-    return pd.DataFrame(dados_mensais)
-
-@st.cache_data(ttl=3600) 
-def contar_pecs_por_situacao(ano, id_situacao=None):
-    """
-    Busca o total de PECs com uma situação final específica. (Função de Contagem Principal)
-    """
-    
     data_inicio = f'{ano}-01-01'
-    data_fim = f'{ano}-12-31'
-    
-    if ano == ANO_ATUAL_REAL:
-        data_fim = date.today().strftime('%Y-%m-%d')
+    data_fim = date.today().strftime('%Y-%m-%d') if ano == ANO_ATUAL_REAL else f'{ano}-12-31'
     
     params = {
         'dataInicio': data_inicio,
@@ -112,119 +44,108 @@ def contar_pecs_por_situacao(ano, id_situacao=None):
         
     total_proposicoes = 0
     pagina = 1
+    lista_ids = []
     
-    # Lógica de paginação para contar o total
     while True:
         try:
+            # Limita a busca a 2 páginas se for apenas para IDs de amostragem
+            if buscar_ids and pagina > 2:
+                 break
+            
             response = requests.get(URL_API_PROPOSICOES_V2, params={**params, 'pagina': pagina}, timeout=10)
             response.raise_for_status() 
             dados = response.json().get('dados', [])
+            
+            if buscar_ids:
+                lista_ids.extend([d['id'] for d in dados])
+            
             total_proposicoes += len(dados)
             
-            if len(dados) < params['itens']:
+            if len(dados) < params['itens'] or (buscar_ids and pagina >= 2):
                 break
             
             pagina += 1
             time.sleep(0.05) 
             
         except requests.exceptions.RequestException:
-            return 0
+            return lista_ids if buscar_ids else 0
             
-    return total_proposicoes
-# [Fim das funções de busca existentes]
-
-# --- NOVA FUNÇÃO PARA SEÇÃO 3: AMOSTRAGEM DE SITUAÇÃO ATUAL ---
+    return lista_ids if buscar_ids else total_proposicoes
 
 @st.cache_data(ttl=3600)
-def obter_amostra_situacao_atual(ano):
+def analise_longitudinal(anos_a_analisar):
     """
-    Busca uma AMOSTRA das PECs do ano, faz a requisição de detalhe e classifica o status ATUAL.
-    Isto é feito para evitar sobrecarga na API.
+    (NOVA ANÁLISE ROBUSTA) Contagem total de PECs por ano (Tendência).
     """
+    dados_longitudinais = []
+    for ano in anos_a_analisar:
+        # Reutiliza a função de contagem principal
+        total = contar_pecs_por_situacao(ano) 
+        dados_longitudinais.append({'Ano': str(ano), 'Total de PECs': total})
+    return pd.DataFrame(dados_longitudinais)
+
+@st.cache_data(ttl=3600)
+def analise_orgao_amostral(ano):
+    """
+    (NOVA ANÁLISE ROBUSTA) Busca uma AMOSTRA de PECs e classifica a tramitação 
+    pela sigla do Órgão/Comissão (Bottleneck).
+    """
+    st.info("Buscando amostra de 200 PECs para análise de Órgão/Comissão...")
     
-    st.info("Buscando amostra de IDs para análise de situação atual...")
-    
-    # 1. Busca os IDs (limitamos a uma amostragem de 2 páginas)
-    params = {
-        'dataInicio': f'{ano}-01-01',
-        'dataFim': date.today().strftime('%Y-%m-%d'),
-        'codTipo': CODIGO_PEC,
-        'ordenarPor': 'id',
-        'itens': 50, # Apenas 50 itens por página
-    }
-    
-    lista_ids = []
-    # Buscamos apenas 2 páginas para ter uma amostra de até 100 PECs (evitando sobrecarga)
-    for pagina in range(1, 3): 
-        try:
-            response = requests.get(URL_API_PROPOSICOES_V2, params={**params, 'pagina': pagina}, timeout=10)
-            dados = response.json().get('dados', [])
-            lista_ids.extend([d['id'] for d in dados])
-            time.sleep(0.05)
-        except:
-            pass
+    # Busca IDs (limita a 2 páginas na função de contagem)
+    lista_ids = contar_pecs_por_situacao(ano, buscar_ids=True)
             
     if not lista_ids:
         return pd.DataFrame()
 
-    # 2. Faz a chamada de detalhe para a amostra e extrai a última situação
-    dados_situacao = []
+    dados_orgao = []
     
-    for id_pec in lista_ids:
+    # Processa apenas os primeiros 200 IDs para evitar Timeout
+    for id_pec in lista_ids[:200]: 
         try:
             url_detalhe = f"{URL_API_PROPOSICOES_V2}/{id_pec}"
             response = requests.get(url_detalhe, timeout=5)
             detalhe = response.json()
             
-            # A situação ATUAL está em 'statusProposicao' ou similar. Usaremos 'ultimoStatus'
-            status_atual = detalhe.get('statusProposicao', {}).get('descricaoSituacao', 'Em Análise')
+            # Extrai o ÓRGÃO/COMISSÃO que está com a PEC (onde ela está parada)
+            sigla_orgao = detalhe.get('statusProposicao', {}).get('siglaOrgao', 'Sem Órgão Designado')
             
-            # Classificação: Simplificamos os vários status
-            if 'arquivamento' in status_atual.lower():
-                status_classificado = 'Arquivamento/Rejeição'
-            elif 'pronta para pauta' in status_atual.lower() or 'plenário' in status_atual.lower():
-                status_classificado = 'Pronta para Pauta/Plenário'
-            elif 'aprovada' in status_atual.lower() or 'sancionada' in status_atual.lower() or 'promulgada' in status_atual.lower():
-                 status_classificado = 'Sucesso Final (Aprovada)'
-            else:
-                status_classificado = 'Em Tramitação'
-                
-            dados_situacao.append({'Situação Atual': status_classificado, 'Total': 1})
+            dados_orgao.append({'Órgão Responsável': sigla_orgao, 'Total': 1})
             
-            time.sleep(0.05) # Pausa crucial
+            time.sleep(0.05) 
             
         except:
             continue
             
-    if not dados_situacao:
+    if not dados_orgao:
         return pd.DataFrame()
         
-    df_amostra = pd.DataFrame(dados_situacao)
-    # Agrupa e conta o total por status
-    return df_amostra.groupby('Situação Atual').sum().reset_index()
+    df_amostra = pd.DataFrame(dados_orgao)
+    # Agrupa e conta o total por Órgão
+    return df_amostra.groupby('Órgão Responsável').sum().reset_index()
 
 
-# --- 4. INTERFACE STREAMLIT PRINCIPAL ---
+# --- 3. INTERFACE STREAMLIT PRINCIPAL ---
 
 st.set_page_config(layout="wide", page_title="Análise de PECs - Câmara dos Deputados")
 
-st.title("🏛️ Análise da Produtividade Legislativa (Foco em PECs)")
-st.header("Propostas de Emenda à Constituição (2023 vs. 2024)")
+st.title("🏛️ Análise Jurimétrica da Produtividade Legislativa")
+st.header("Propostas de Emenda à Constituição (PECs)")
 
-# --- BOTÃO DE LIMPEZA DE CACHE ---
+# --- SIDEBAR E CACHE ---
 with st.sidebar:
     st.markdown("### 🛠️ Ferramentas")
     st.button("Resetar Dados (Limpar Cache da API)", on_click=limpar_cache_api) 
-    st.caption("Use se os dados globais parecerem 100% de sucesso ou zero.")
+    st.caption("Use se os dados parecerem desatualizados ou incompletos.")
 
 st.markdown("---")
 
 # --- SELETOR DE ANO ---
-st.subheader("Selecione o Ano para Análise:")
+st.subheader("Selecione o Ano para Análise Específica:")
 anos_disponiveis = [2024, 2023] 
 
 ano_selecionado = st.radio(
-    "Escolha o ano base para visualizar as informações:",
+    "Escolha o ano base:",
     anos_disponiveis,
     index=0, 
     format_func=lambda x: f"Ano {x}", 
@@ -234,82 +155,68 @@ ano_selecionado = st.radio(
 st.markdown("---")
 
 # =========================================================================
-# SEÇÃO 1: GRÁFICO MENSAL (Volume de Propostas)
+# SEÇÃO 1: GRÁFICO LONGITUDINAL (NOVA IDEIA)
 # =========================================================================
+st.subheader("1. Tendência Histórica: Volume de PECs Protocoladas (2019-2024)")
+st.caption("Esta análise robusta mostra a evolução do trabalho legislativo ao longo do tempo, sem depender de 'situações finais'.")
 
-# [Código da Seção 1 (Gráfico Mensal) - (Reutilize o código do bloco anterior)]
+with st.spinner("Buscando dados longitudinais (2019 até hoje)..."):
+    anos_historicos = list(range(2019, ANO_ATUAL_REAL + 1))
+    df_longitudinal = analise_longitudinal(anos_historicos)
 
-with st.spinner(f'Buscando dados mensais reais da API para PECs de {ano_selecionado}...'):
-    df_pec_mensal = buscar_pecs_mensais(ano_selecionado)
-
-if df_pec_mensal.empty or df_pec_mensal['Total'].sum() == 0:
-    st.error(f"Não há registros de PECs para {ano_seleçãoado} na base de dados da API ou houve falha na conexão.")
-    st.stop() 
-
-total_pec_anual = df_pec_mensal['Total'].sum()
-total_aprovado_final = contar_pecs_por_situacao(ano_selecionado, SITUACAO_APROVADA_FINAL) 
-
-# --- GRÁFICO 1: PECs (Emendas Constitucionais) ---
-st.subheader(f"1. Volume Mensal de Emendas à Constituição (PECs) em {ano_selecionado}")
-st.caption("Gráfico de Barras: Número de Propostas de Emenda à Constituição (PECs) apresentadas por mês.")
-
-df_pec_mensal = df_pec_mensal.sort_values(by='Ordem_Mes')
-
-fig_pec_mensal = px.bar(
-    df_pec_mensal,
-    x='Mês',
-    y='Total',
-    color_discrete_sequence=['red'], 
-    title=f'PECs Apresentadas Mês a Mês em {ano_selecionado}',
-    labels={'Total': 'Número de PECs', 'Mês': 'Mês de Apresentação'},
-)
-fig_pec_mensal.update_layout(
-    xaxis={'categoryorder': 'array', 'categoryarray': df_pec_mensal['Mês'].unique()},
-    yaxis={'title': 'Número de PECs'}
-)
-st.plotly_chart(fig_pec_mensal, use_container_width=True)
-
-# Métricas
-col1, col2 = st.columns(2)
-col1.metric(f"Total Apresentado em {ano_selecionado}:", f"{total_pec_anual:,}".replace(",", "."))
-col2.metric(f"Total Aprovado Final (KPI):", f"{total_aprovado_final:,}".replace(",", "."), delta_color="normal")
+if df_longitudinal.empty or df_longitudinal['Total de PECs'].sum() == 0:
+    st.error("Falha ao buscar dados históricos. A API pode estar indisponível.")
+else:
+    fig_longitudinal = px.line(
+        df_longitudinal,
+        x='Ano',
+        y='Total de PECs',
+        title='Volume de Propostas de Emenda à Constituição (PECs) - Últimos 6 Anos',
+        markers=True,
+        line_shape='linear',
+        color_discrete_sequence=['darkblue']
+    )
+    fig_longitudinal.update_layout(yaxis={'title': 'Total de PECs Protocoladas'})
+    st.plotly_chart(fig_longitudinal, use_container_width=True)
 
 
 st.markdown("---")
 
 # =========================================================================
-# SEÇÃO 2: GRÁFICO DE PIZZA (Situação de Tramitação ATUAL - Amostragem)
+# SEÇÃO 2: GRÁFICO DE PIZZA (ANÁLISE DE BOTTLENECK - NOVA IDEIA)
 # =========================================================================
 
-st.subheader(f"2. Situação de Tramitação ATUAL das PECs em {ano_selecionado}")
-st.caption("Análise Jurídica: Distribuição de PECs por estágio atual de tramitação (Amostragem de Dados Reais).")
+st.subheader(f"2. Análise de Bottleneck: Onde as PECs estão Paradas? ({ano_selecionado})")
+st.caption("Mostra em qual Órgão ou Comissão a PEC está aguardando, revelando os principais gargalos da tramitação. (Amostragem de dados)")
 
-with st.spinner("Analisando amostragem de situação atual das PECs..."):
-    df_situacao_atual = obter_amostra_situacao_atual(ano_selecionado)
+with st.spinner(f"Analisando em tempo real os Órgãos responsáveis por uma amostra de PECs de {ano_selecionado}..."):
+    df_orgao_atual = analise_orgao_amostral(ano_selecionado)
 
-if df_situacao_atual.empty:
-    st.warning("Não foi possível coletar a amostra para a análise de tramitação. A API pode estar limitando as chamadas de detalhe.")
+if df_orgao_atual.empty:
+    st.warning("Não foi possível coletar a amostra para a análise de bottleneck. A API de detalhe está limitando as chamadas.")
 else:
-    # --- GRÁFICO DE PIZZA ---
-    fig_pizza_atual = px.pie(
-        df_situacao_atual,
+    # Filtra os órgãos com maior representatividade (acima de 2% para clareza)
+    total_amostra = df_orgao_atual['Total'].sum()
+    df_orgao_filtrado = df_orgao_atual[df_orgao_atual['Total'] / total_amostra > 0.02]
+    
+    # Agrupa o restante em "Outros"
+    total_outros = total_amostra - df_orgao_filtrado['Total'].sum()
+    if total_outros > 0:
+        df_outros = pd.DataFrame([{'Órgão Responsável': 'Outros Órgãos/Comissões (Menos de 2%)', 'Total': total_outros}])
+        df_orgao_filtrado = pd.concat([df_orgao_filtrado, df_outros], ignore_index=True)
+    
+    fig_pizza_orgao = px.pie(
+        df_orgao_filtrado,
         values='Total',
-        names='Situação Atual',
-        title=f'Distribuição Atual das PECs ({ano_selecionado}) - Amostra',
+        names='Órgão Responsável',
+        title=f'Distribuição de PECs pelo Órgão/Comissão Responsável ({ano_selecionado})',
         hole=.5,
-        color_discrete_map={
-            'Sucesso Final (Aprovada)': 'green',
-            'Arquivamento/Rejeição': 'darkred',
-            'Pronta para Pauta/Plenário': 'purple',
-            'Em Tramitação': 'orange'
-        }
     )
-    st.plotly_chart(fig_pizza_atual, use_container_width=True)
+    st.plotly_chart(fig_pizza_orgao, use_container_width=True)
 
     # Tabela de Detalhamento
-    st.markdown("##### Tabela de Contagem por Situação:")
-    st.dataframe(df_situacao_atual, use_container_width=True, hide_index=True)
-
+    st.markdown("##### Detalhamento do Órgão Responsável (Bottleneck):")
+    st.dataframe(df_orgao_filtrado.sort_values(by='Total', ascending=False), use_container_width=True, hide_index=True)
 
 st.markdown("---")
-st.success("O projeto de Jurimetria está completo, com duas análises vitais (volume e estágio de tramitação) baseadas em dados reais da API da Câmara!")
+st.success("Estes gráficos são robustos e fornecem insights reais sobre a dinâmica legislativa da Câmara!")

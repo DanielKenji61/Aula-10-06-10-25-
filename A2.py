@@ -10,32 +10,39 @@ from urllib.parse import quote
 
 URL_BASE_PROPOSICOES = "https://dadosabertos.camara.leg.br/api/v2/proposicoes"
 URL_BASE_DEPUTADOS = "https://dadosabertos.camara.leg.br/api/v2/deputados"
-# Corrigido: Fixamos os anos desejados
+# Fixado: Anos solicitados pelo usuário
 ANOS_DESEJADOS = [2024, 2023] 
 
 # Códigos de Referência na API (Reais)
-CODIGO_PL = 207      # Projeto de Lei
-CODIGO_PEC = 304     # Proposta de Emenda à Constituição
+CODIGO_PL = 207      
+CODIGO_PEC = 304     
 SITUACAO_APROVADA = 300  # Transf. em Norma Jurídica / Aprovada nas 2 Casas
-SITUACAO_ARQUIVADA = 239 # Arquivada
-SITUACAO_TODAS = None    # Para contar o total apresentado
+SITUACAO_ARQUIVADA = 239 
+SITUACAO_TODAS = None    
 
 # --- 2. FUNÇÕES DE BUSCA DA API (DADOS REAIS E ROBUSTOS) ---
 
-# Aumentamos o TTL (Time-To-Live) e a robustez da contagem
-@st.cache_data(ttl=7200) # Cache de 2 horas para dados estáveis
+# Adicionamos um botão de reset para limpar o cache quando necessário (resolve o problema dos 313 fixos)
+def limpar_cache_api():
+    st.cache_data.clear()
+    st.rerun()
+
+@st.cache_data(ttl=3600) # Cache de 1 hora
 def contar_proposicoes_reais(ano, cod_tipo, id_situacao=None, id_autor=None):
     """
-    Faz a chamada real à API da Câmara para contar proposições, com filtros específicos,
-    garantindo que a paginação seja completa.
+    Faz a chamada real à API da Câmara para contar proposições.
     """
     
-    # A data final é crucial para evitar resultados incompletos no ano atual, 
-    # mas como focamos em 2023 e 2024, usamos a data final do ano.
-    data_fim = f'{ano}-12-31' 
+    # Usamos o primeiro dia do ano para a data inicial
+    data_inicio = f'{ano}-01-01'
+    
+    # A data final é crucial: se for o ano atual (2025), o filtro deve ir até o mês atual
+    data_fim = f'{ano}-12-31'
+    if ano == date.today().year:
+         data_fim = f'{date.today().year}-{date.today().month:02d}-{date.today().day:02d}'
     
     params = {
-        'dataInicio': f'{ano}-01-01',
+        'dataInicio': data_inicio,
         'dataFim': data_fim,
         'codTipo': cod_tipo,
         'ordenarPor': 'id', 
@@ -51,18 +58,14 @@ def contar_proposicoes_reais(ano, cod_tipo, id_situacao=None, id_autor=None):
     total_proposicoes = 0
     pagina = 1
     
-    # st.info(f"Buscando: Ano={ano}, Tipo={cod_tipo}, Situação={id_situacao}, Autor={id_autor}") # Debug
-    
-    # Paginação
+    # Paginação para garantir que todos os dados sejam coletados
     while True:
         try:
-            # Desabilitamos a verificação da data final no parâmetro para buscar o total
             response = requests.get(URL_BASE_PROPOSICOES, params={**params, 'pagina': pagina})
             response.raise_for_status() 
             dados = response.json().get('dados', [])
             total_proposicoes += len(dados)
             
-            # Condição de parada: se a página retornou menos itens que o limite
             if len(dados) < params['itens']:
                 break
             
@@ -70,7 +73,7 @@ def contar_proposicoes_reais(ano, cod_tipo, id_situacao=None, id_autor=None):
             time.sleep(0.1) 
             
         except requests.exceptions.RequestException as e:
-            # st.error(f"Erro ao acessar API (contagem): {e}") 
+            # Em caso de erro na API, retorna 0 para evitar quebra do programa
             return 0
             
     return total_proposicoes
@@ -104,7 +107,7 @@ def buscar_id_deputado(nome):
 def processar_dados_globais(ano):
     """Busca os totais reais de PLs e PECs na API e calcula as taxas de sucesso."""
     
-    # Busca 1: Total Apresentado
+    # Busca 1: Total Apresentado (usando SITUACAO_TODAS para ter o número máximo)
     total_pl_apres = contar_proposicoes_reais(ano, CODIGO_PL, SITUACAO_TODAS)
     total_pec_apres = contar_proposicoes_reais(ano, CODIGO_PEC, SITUACAO_TODAS)
     
@@ -112,11 +115,11 @@ def processar_dados_globais(ano):
     total_pl_aprov = contar_proposicoes_reais(ano, CODIGO_PL, SITUACAO_APROVADA)
     total_pec_aprov = contar_proposicoes_reais(ano, CODIGO_PEC, SITUACAO_APROVADA)
     
-    # Busca 3: Total Arquivado (Usado como base de insucesso)
+    # Busca 3: Total Arquivado
     total_pl_arquiv = contar_proposicoes_reais(ano, CODIGO_PL, SITUACAO_ARQUIVADA)
     total_pec_arquiv = contar_proposicoes_reais(ano, CODIGO_PEC, SITUACAO_ARQUIVADA)
     
-    # Cálculo das Taxas e Criação do DataFrame
+    # Cria o DataFrame para os gráficos
     data_sucesso = {
         'Tipo': ['PL', 'PEC'],
         'Apresentadas': [total_pl_apres, total_pec_apres],
@@ -162,16 +165,24 @@ st.set_page_config(layout="wide", page_title="Analisador de Jurimetria")
 st.title("⚖️ Jurimetria: Análise da Produção Legislativa")
 st.header("Dados Reais da API da Câmara dos Deputados")
 
+# --- BOTÃO DE LIMPEZA DE CACHE ---
+with st.sidebar:
+    st.markdown("### 🛠️ Ferramentas")
+    st.button("Resetar Dados (Limpar Cache da API)", on_click=limpar_cache_api)
+    st.caption("Use se os dados globais parecerem incorretos ou não se atualizarem.")
+
+st.markdown("---")
+
 # --- SELETOR DE ANO ---
 st.subheader("Período de Análise:")
 
-# Corrigido: Agora usamos a lista fixa de anos
-anos_disponiveis = ANOS_DESEJADOS 
+# Usamos a lista fixa de anos desejada
+anos_disponiveis = ANOS_DESEJADOS
 
 ano_selecionado = st.radio(
     "Escolha o ano base para todos os gráficos:",
     anos_disponiveis,
-    index=anos_disponiveis.index(2024) if 2024 in anos_disponiveis else 0, # Padrão para 2024
+    index=anos_disponiveis.index(2024), 
     horizontal=True
 )
 
@@ -181,23 +192,21 @@ st.markdown("---")
 
 st.subheader(f"📊 Análise Global: Produtividade por Tipo ({ano_selecionado})")
 
-# A chamada agora é mais robusta e deve retornar valores diferentes para 2023 e 2024
+# A chamada agora é mais robusta 
 df_analise_global = processar_dados_globais(ano_selecionado)
 
-if df_analise_global['Apresentadas'].sum() == 0:
-    st.warning(f"Não foram encontrados dados de PLs e PECs com status 'Aprovada' ou 'Arquivada' para o ano de {ano_selecionado}. Isso pode indicar que o cache da API está ativo ou não há dados finais para o período.")
+total_apresentado = df_analise_global['Apresentadas'].sum()
+total_aprovado = df_analise_global['Aprovadas'].sum()
+
+if total_apresentado == 0:
+    st.error(f"Não foi possível carregar o total de proposições para o ano de {ano_selecionado}. Tente o ano de 2023 ou clique em 'Resetar Dados'.")
 else:
-    # KPIs
-    total_apresentado = df_analise_global['Apresentadas'].sum()
-    total_aprovado = df_analise_global['Aprovadas'].sum()
+    # --- KPIs ---
     taxa_global = (total_aprovado / total_apresentado) * 100 if total_apresentado > 0 else 0
     
-    # Corrigido: Verificação da quantidade de proposições para resolver o problema dos 313
-    if total_apresentado <= 500: # Se o total for baixo, avisa que o filtro pode ser restritivo
-        st.warning(f"Total de proposições encontradas: {total_apresentado}. Este número pode ser baixo devido à API retornar apenas proposições com tramitação encerrada ou transformada em norma.")
-    
     col1, col2, col3 = st.columns(3)
-    col1.metric("Total de Proposições Analisadas", f"{total_apresentado:,}".replace(",", "."))
+
+    col1.metric("Total de Proposições Apresentadas", f"{total_apresentado:,}".replace(",", "."))
     col2.metric("Aprovadas (Transformadas em Norma)", f"{total_aprovado:,}".replace(",", "."))
     col3.metric("Taxa de Sucesso Global", f"{taxa_global:.2f}%")
     

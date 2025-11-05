@@ -9,16 +9,24 @@ from urllib.parse import quote
 # --- 1. CONFIGURAÇÃO E VARIÁVEIS GLOBAIS ---
 
 URL_BASE_PROPOSICOES = "https://dadosabertos.camara.leg.br/api/v2/proposicoes"
-URL_BASE_DEPUTADOS = "https://dadosabertos.camara.leg.br/api/v2/deputados"
-# Fixado: Anos solicitados pelo usuário
-ANOS_DESEJADOS = [2024, 2023] 
+# Definimos o período de análise conforme solicitado: Jan a Out de 2025
+ANO_ALVO = 2025
+DATA_INICIO_ALVO = f'{ANO_ALVO}-01-01'
+DATA_FIM_ALVO = f'{ANO_ALVO}-10-31' 
 
 # Códigos de Referência na API (Reais)
 CODIGO_PL = 207      
-CODIGO_PEC = 304     
 SITUACAO_APROVADA = 300  # Transf. em Norma Jurídica / Aprovada nas 2 Casas
-SITUACAO_ARQUIVADA = 239 
-SITUACAO_TODAS = None    
+SITUACAO_TODAS = None    # Para contar o total apresentado
+
+# Definição dos Trimestres para a Análise Trimestral
+TRIMESTRES = {
+    '1º Trimestre (Jan-Mar)': {'dataInicio': f'{ANO_ALVO}-01-01', 'dataFim': f'{ANO_ALVO}-03-31'},
+    '2º Trimestre (Abr-Jun)': {'dataInicio': f'{ANO_ALVO}-04-01', 'dataFim': f'{ANO_ALVO}-06-30'},
+    '3º Trimestre (Jul-Set)': {'dataInicio': f'{ANO_ALVO}-07-01', 'dataFim': f'{ANO_ALVO}-09-30'},
+    # Outubro é o 4º período, pois o último mês é parcial
+    '4º Período (Out)': {'dataInicio': f'{ANO_ALVO}-10-01', 'dataFim': f'{ANO_ALVO}-10-31'}, 
+}
 
 # --- 2. FUNÇÕES DE BUSCA DA API (DADOS REAIS E ROBUSTOS) ---
 
@@ -28,26 +36,18 @@ def limpar_cache_api():
     st.rerun()
 
 @st.cache_data(ttl=3600) # Cache de 1 hora
-def contar_proposicoes_reais(ano, cod_tipo, id_situacao=None, id_autor=None, data_inicio_fixa=None, data_fim_fixa=None):
+def contar_proposicoes_reais(cod_tipo, id_situacao=None, data_inicio_fixa=None, data_fim_fixa=None):
     """
-    Faz a chamada real à API da Câmara para contar proposições.
-    Aceita datas fixas para consultas específicas.
+    Faz a chamada real à API da Câmara para contar proposições dentro de um período fixo.
     """
     
-    # 1. Determine a Faixa de Data
-    if data_inicio_fixa and data_fim_fixa:
-        data_inicio = data_inicio_fixa
-        data_fim = data_fim_fixa
-    else:
-        # Lógica original: início do ano até o fim do ano ou o dia atual (se for o ano atual)
-        data_inicio = f'{ano}-01-01'
-        data_fim = f'{ano}-12-31'
-        if ano == date.today().year:
-             data_fim = f'{date.today().year}-{date.today().month:02d}-{date.today().day:02d}'
+    # Validação do período
+    if not data_inicio_fixa or not data_fim_fixa:
+        return 0 
     
     params = {
-        'dataInicio': data_inicio,
-        'dataFim': data_fim,
+        'dataInicio': data_inicio_fixa,
+        'dataFim': data_fim_fixa,
         'codTipo': cod_tipo,
         'ordenarPor': 'id', 
         'itens': 100, 
@@ -56,9 +56,6 @@ def contar_proposicoes_reais(ano, cod_tipo, id_situacao=None, id_autor=None, dat
     if id_situacao is not None:
         params['idSituacao'] = id_situacao
         
-    if id_autor is not None:
-        params['idAutor'] = id_autor
-    
     total_proposicoes = 0
     pagina = 1
     
@@ -70,7 +67,6 @@ def contar_proposicoes_reais(ano, cod_tipo, id_situacao=None, id_autor=None, dat
             dados = response.json().get('dados', [])
             total_proposicoes += len(dados)
             
-            # Se a página for menor que o número máximo de itens, paramos
             if len(dados) < params['itens']:
                 break
             
@@ -83,124 +79,103 @@ def contar_proposicoes_reais(ano, cod_tipo, id_situacao=None, id_autor=None, dat
             
     return total_proposicoes
 
-@st.cache_data(ttl=3600)
-def buscar_id_deputado(nome):
-    """Busca o ID do deputado pelo nome."""
-    nome_formatado = quote(nome.strip())
-    
-    params = {
-        'nome': nome_formatado,
-        'ordem': 'ASC',
-        'ordenarPor': 'nome',
-        'itens': 10,
-    }
-    
-    try:
-        response = requests.get(URL_BASE_DEPUTADOS, params=params)
-        response.raise_for_status()
-        dados = response.json().get('dados', [])
-        
-        if dados:
-            return dados[0]['id']
-        return None
-        
-    except requests.exceptions.RequestException:
-        return None
-
 # --- 3. FUNÇÕES DE PROCESSAMENTO E GRÁFICOS ---
 
-def processar_dados_globais(ano):
-    """Busca os totais reais de PLs e PECs na API e calcula as taxas de sucesso para o ano completo/até a data atual."""
+def criar_grafico_volume_trimestral(df_dados):
+    """Gráfico A: Volume de PLs Apresentados por Trimestre."""
     
-    # Busca 1: Total Apresentado (usando SITUACAO_TODAS para ter o número máximo)
-    total_pl_apres = contar_proposicoes_reais(ano, CODIGO_PL, SITUACAO_TODAS)
-    total_pec_apres = contar_proposicoes_reais(ano, CODIGO_PEC, SITUACAO_TODAS)
-    
-    # Busca 2: Total Aprovado
-    total_pl_aprov = contar_proposicoes_reais(ano, CODIGO_PL, SITUACAO_APROVADA)
-    total_pec_aprov = contar_proposicoes_reais(ano, CODIGO_PEC, SITUACAO_APROVADA)
-    
-    # Busca 3: Total Arquivado
-    total_pl_arquiv = contar_proposicoes_reais(ano, CODIGO_PL, SITUACAO_ARQUIVADA)
-    total_pec_arquiv = contar_proposicoes_reais(ano, CODIGO_PEC, SITUACAO_ARQUIVADA)
-    
-    # Cria o DataFrame para os gráficos
-    data_sucesso = {
-        'Tipo': ['PL', 'PEC'],
-        'Apresentadas': [total_pl_apres, total_pec_apres],
-        'Aprovadas': [total_pl_aprov, total_pec_aprov],
-        'Arquivadas': [total_pl_arquiv, total_pec_arquiv],
-        'Taxa_Sucesso': [
-            (total_pl_aprov / total_pl_apres) * 100 if total_pl_apres > 0 else 0,
-            (total_pec_aprov / total_pec_apres) * 100 if total_pec_apres > 0 else 0,
-        ]
-    }
-    
-    return pd.DataFrame(data_sucesso)
-
-def criar_grafico_taxa_sucesso(df_dados, ano):
-    """Gráfico 1: Taxa de Sucesso (Aprovadas / Apresentadas) por tipo de Proposição."""
     fig = px.bar(
         df_dados,
-        x='Tipo',
-        y='Taxa_Sucesso',
-        color='Tipo',
-        title=f'1. Taxa de Sucesso (Aprovação Final) das Proposições ({ano})',
-        labels={'Taxa_Sucesso': 'Taxa de Aprovação (%)', 'Tipo': 'Tipo de Proposição'}
+        x='Trimestre',
+        y='Total',
+        color='Total',
+        title=f'A. Volume de Projetos de Lei (PLs) Propostos por Período em {ANO_ALVO}',
+        labels={'Total': 'PLs Propostos', 'Trimestre': 'Período'},
+        color_continuous_scale=px.colors.sequential.Teal
     )
-    fig.update_yaxes(range=[0, 100])
+    fig.update_layout(xaxis={'categoryorder':'array', 'categoryarray': list(TRIMESTRES.keys())})
     return fig
 
-def criar_grafico_desempenho_deputado(df_deputado, nome, ano):
-    """Gráfico 3: Desempenho individual do Deputado."""
-    fig = px.bar(
-        df_deputado,
-        x='Situação',
-        y='Total',
-        color='Situação',
-        title=f'Desempenho Legislativo de {nome} ({ano})',
-        labels={'Total': 'Total de Projetos (PLs e PECs)', 'Situação': 'Situação do Projeto'}
+def criar_grafico_funil_sucesso(total_propostos, total_aprovados):
+    """Gráfico B: Funil de Sucesso (Aprovados vs. Outras Situações)."""
+    
+    total_outras_situacoes = total_propostos - total_aprovados
+    
+    df_funil = pd.DataFrame({
+        'Situação': ['Aprovados (Sucesso)', 'Outras Situações (Tramitando/Arquivado)'],
+        'Total': [total_aprovados, total_outras_situacoes]
+    })
+    
+    fig = px.pie(
+        df_funil,
+        values='Total',
+        names='Situação',
+        title=f'B. Taxa de Conversão de PLs (Propostos vs. Aprovados) em {ANO_ALVO}',
+        hole=.5, # Gráfico Donut
+        color_discrete_sequence=['green', 'darkred']
     )
+    fig.update_traces(textinfo='percent+label', pull=[0.1, 0])
     return fig
 
 # --- 4. INTERFACE STREAMLIT PRINCIPAL ---
 
-st.set_page_config(layout="wide", page_title="Analisador de Jurimetria")
+st.set_page_config(layout="wide", page_title="Termômetro Legislativo 2025")
 
-st.title("⚖️ Jurimetria: Análise da Produção Legislativa")
-st.header("Dados Reais da API da Câmara dos Deputados")
+st.title("🌡️ Termômetro de Produtividade Legislativa")
+st.header(f"Análise de Projetos de Lei (PLs) - {ANO_ALVO}")
 
 # --- BOTÃO DE LIMPEZA DE CACHE ---
 with st.sidebar:
     st.markdown("### 🛠️ Ferramentas")
     st.button("Resetar Dados (Limpar Cache da API)", on_click=limpar_cache_api)
-    st.caption("Use se os dados globais parecerem incorretos ou não se atualizarem.")
+    st.caption("Use se os dados não se atualizarem.")
 
 st.markdown("---")
 
-# --- NOVO BLOCO: ANÁLISE ESPECÍFICA SOLICITADA (Jan-Out/2025) ---
+# --- BLOCO 1: ANÁLISE TRIMESTRAL (GRÁFICO A) ---
 
-st.subheader("🎯 Jurimetria Específica: PLs Propostos e Aprovados (Jan a Out/2025)")
+st.subheader("1. Volume de Propostas Apresentadas (Análise Trimestral)")
+st.caption("Acompanhamento da Produtividade em PLs ao longo de 2025 (Dados Reais da API da Câmara).")
 
-# Variáveis fixas para a análise solicitada
-ANO_ALVO = 2025
-DATA_INICIO_ALVO = f'{ANO_ALVO}-01-01'
-DATA_FIM_ALVO = f'{ANO_ALVO}-10-31' # Fim de Outubro
-
-with st.spinner("Realizando análise específica (Janeiro a Outubro de 2025)..."):
+with st.spinner("Buscando dados trimestrais na API..."):
+    dados_trimestrais = []
     
-    # 1. Total de PLs Propostos (Situação TODAS)
+    for nome_trimestre, datas in TRIMESTRES.items():
+        total = contar_proposicoes_reais(
+            CODIGO_PL, 
+            SITUACAO_TODAS, 
+            data_inicio_fixa=datas['dataInicio'], 
+            data_fim_fixa=datas['dataFim']
+        )
+        dados_trimestrais.append({'Trimestre': nome_trimestre, 'Total': total})
+
+    df_trimestral = pd.DataFrame(dados_trimestrais)
+
+# Gráfico A: Volume Trimestral
+if df_trimestral['Total'].sum() > 0:
+    fig_a = criar_grafico_volume_trimestral(df_trimestral)
+    st.plotly_chart(fig_a, use_container_width=True)
+else:
+    st.error("Não foi possível carregar dados da API para o período de 2025. Tente limpar o cache.")
+
+st.markdown("---")
+
+# --- BLOCO 2: TAXA DE CONVERSÃO TOTAL (GRÁFICO B) ---
+
+st.subheader("2. Taxa de Sucesso: Propostos vs. Aprovados (Jan a Out/2025)")
+
+with st.spinner("Calculando taxa de conversão total..."):
+    
+    # 1. Total de PLs Propostos (Jan-Out)
     total_pl_proposto = contar_proposicoes_reais(
-        ANO_ALVO, 
         CODIGO_PL, 
         SITUACAO_TODAS, 
         data_inicio_fixa=DATA_INICIO_ALVO, 
         data_fim_fixa=DATA_FIM_ALVO
     )
 
-    # 2. Total de PLs Aprovados (Situação APROVADA)
+    # 2. Total de PLs Aprovados (Jan-Out)
     total_pl_aprovado = contar_proposicoes_reais(
-        ANO_ALVO, 
         CODIGO_PL, 
         SITUACAO_APROVADA, 
         data_inicio_fixa=DATA_INICIO_ALVO, 
@@ -211,123 +186,16 @@ with st.spinner("Realizando análise específica (Janeiro a Outubro de 2025)..."
 
     col_prop, col_aprov, col_taxa = st.columns(3)
 
-    col_prop.metric("PLs Propostos (Jan-Out/2025)", f"{total_pl_proposto:,}".replace(",", "."))
-    col_aprov.metric("PLs Aprovados (Jan-Out/2025)", f"{total_pl_aprovado:,}".replace(",", "."))
-    col_taxa.metric("Taxa de Aprovação no Período", f"{taxa_sucesso:.2f}%")
+    col_prop.metric("PLs Propostos (Jan-Out)", f"{total_pl_proposto:,}".replace(",", "."))
+    col_aprov.metric("PLs Aprovados (Jan-Out)", f"{total_pl_aprovado:,}".replace(",", "."))
+    col_taxa.metric("Taxa de Aprovação", f"{taxa_sucesso:.2f}%")
 
-    # Gráfico simples de comparação
+    # Gráfico B: Funil de Sucesso
     if total_pl_proposto > 0:
-        df_especifico = pd.DataFrame({
-            'Situação': ['Propostos (Jan-Out)', 'Aprovados (Jan-Out)'],
-            'Total': [total_pl_proposto, total_pl_aprovado]
-        })
-        
-        fig_especifico = px.bar(
-            df_especifico,
-            x='Situação',
-            y='Total',
-            color='Situação',
-            title='Comparativo: Propostos vs. Aprovados (PLs em 2025)',
-            labels={'Total': 'Total de Projetos de Lei', 'Situação': 'Situação'}
-        )
-        st.plotly_chart(fig_especifico, use_container_width=True)
+        fig_b = criar_grafico_funil_sucesso(total_pl_proposto, total_pl_aprovado)
+        st.plotly_chart(fig_b, use_container_width=True)
     else:
-        st.info("Nenhum Projeto de Lei (PL) foi encontrado no período de Janeiro a Outubro de 2025, de acordo com a API, ou a API está inoperante.")
+        st.info("Dados insuficientes para calcular a Taxa de Sucesso.")
 
 st.markdown("---")
-
-# --- SELETOR DE ANO (ANÁLISE ANUAL) ---
-st.subheader("Período de Análise Anual (2024 e 2023):")
-
-# Usamos a lista fixa de anos desejada
-anos_disponiveis = ANOS_DESEJADOS
-
-ano_selecionado = st.radio(
-    "Escolha o ano base para os gráficos anuais (Global e Deputado):",
-    anos_disponiveis,
-    index=anos_disponiveis.index(2024), 
-    horizontal=True
-)
-
-st.markdown("---")
-
-# --- BLOCO 1: ANÁLISE GERAL (PL vs PEC) ---
-
-st.subheader(f"📊 Análise Global: Produtividade por Tipo ({ano_selecionado})")
-
-# A chamada agora é mais robusta 
-df_analise_global = processar_dados_globais(ano_selecionado)
-
-total_apresentado = df_analise_global['Apresentadas'].sum()
-total_aprovado = df_analise_global['Aprovadas'].sum()
-
-if total_apresentado == 0:
-    st.error(f"Não foi possível carregar o total de proposições para o ano de {ano_selecionado}. Tente o ano de 2023 ou clique em 'Resetar Dados'.")
-else:
-    # --- KPIs ---
-    taxa_global = (total_aprovado / total_apresentado) * 100 if total_apresentado > 0 else 0
-    
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric("Total de Proposições Apresentadas", f"{total_apresentado:,}".replace(",", "."))
-    col2.metric("Aprovadas (Transformadas em Norma)", f"{total_aprovado:,}".replace(",", "."))
-    col3.metric("Taxa de Sucesso Global", f"{taxa_global:.2f}%")
-    
-    # Gráfico 1: Taxa de Sucesso
-    fig1 = criar_grafico_taxa_sucesso(df_analise_global, ano_selecionado)
-    st.plotly_chart(fig1, use_container_width=True)
-
-st.markdown("---")
-
-# --- BLOCO 2: ANÁLISE INDIVIDUAL POR DEPUTADO ---
-
-st.subheader(f"👤 Análise Individual: Desempenho do Parlamentar ({ano_selecionado})")
-st.caption("Pesquise o nome completo ou parte do nome de um Deputado para ver sua produtividade no ano selecionado.")
-
-nome_deputado = st.text_input("Nome do Deputado:", placeholder="Ex: Nikolas Ferreira, Gleisi Hoffmann, etc.")
-botao_buscar = st.button("Buscar Desempenho", key="btn_buscar_deputado")
-
-if botao_buscar and nome_deputado:
-    
-    with st.spinner(f"Buscando ID e projetos de {nome_deputado}..."):
-        
-        # 1. BUSCA ID
-        id_deputado = buscar_id_deputado(nome_deputado)
-        
-        if id_deputado is None:
-            st.error(f"Deputado(a) '{nome_deputado}' não encontrado(a) na base de dados da Câmara.")
-        else:
-            # 2. BUSCA TOTAL APRESENTADO (PL + PEC)
-            total_apresentado = (
-                contar_proposicoes_reais(ano_selecionado, CODIGO_PL, SITUACAO_TODAS, id_deputado) +
-                contar_proposicoes_reais(ano_selecionado, CODIGO_PEC, SITUACAO_TODAS, id_deputado)
-            )
-
-            # 3. BUSCA TOTAL APROVADO (PL + PEC)
-            total_aprovado = (
-                contar_proposicoes_reais(ano_selecionado, CODIGO_PL, SITUACAO_APROVADA, id_deputado) +
-                contar_proposicoes_reais(ano_selecionado, CODIGO_PEC, SITUACAO_APROVADA, id_deputado)
-            )
-            
-            # 4. CÁLCULO
-            taxa_aprovacao = (total_aprovado / total_apresentado) * 100 if total_apresentado > 0 else 0
-            
-            # 5. EXIBIÇÃO
-            st.success(f"Desempenho de **{nome_deputado}** (ID: {id_deputado}) em {ano_selecionado} obtido com sucesso:")
-            
-            col_a, col_b, col_c = st.columns(3)
-            col_a.metric("Projetos Apresentados", f"{total_apresentado:,}".replace(",", "."))
-            col_b.metric("Projetos Aprovados", f"{total_aprovado:,}".replace(",", "."))
-            col_c.metric("Taxa de Aprovação Individual", f"{taxa_aprovacao:.2f}%")
-
-            # 6. GRÁFICO INDIVIDUAL
-            df_deputado_plot = pd.DataFrame({
-                'Situação': ['Projetos Apresentados', 'Projetos Aprovados'],
-                'Total': [total_apresentado, total_aprovado]
-            })
-            
-            if total_apresentado > 0:
-                fig3 = criar_grafico_desempenho_deputado(df_deputado_plot, nome_deputado, ano_selecionado)
-                st.plotly_chart(fig3, use_container_width=True)
-            else:
-                st.info("O deputado não apresentou projetos (PL ou PEC) no ano selecionado que foram contabilizados pela API.")
+st.success("Análise de Jurimetria concluída com dados reais da API da Câmara dos Deputados.")

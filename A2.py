@@ -11,9 +11,9 @@ from dateutil.relativedelta import relativedelta
 URL_API_PROPOSICOES_V2 = "https://dadosabertos.camara.leg.br/api/v2/proposicoes"
 CODIGO_PEC = 304     
 
-# CÓDIGOS DE SITUAÇÃO CORRIGIDOS PARA ANÁLISE REALISTA
-SITUACAO_APROVADA_FINAL = 300 # Usaremos para o KPI de sucesso, mas não no gráfico de pizza
-SITUACAO_ARQUIVADA = 239 # Insucesso claro
+# CÓDIGOS DE SITUAÇÃO
+SITUACAO_APROVADA_FINAL = 300 # Transf. em Norma Jurídica (Sucesso Final)
+SITUACAO_ARQUIVADA = 239      # Insucesso Claro (Arquivada)
 
 ANO_ATUAL_REAL = date.today().year
 MES_ATUAL = date.today().month
@@ -28,7 +28,7 @@ def limpar_cache_api():
 @st.cache_data(ttl=3600) 
 def contar_pecs_por_situacao(ano, id_situacao=None):
     """
-    Busca o total de PECs com uma situação final específica (Aprovadas, Arquivadas, ou Total Apresentado).
+    Busca o total de PECs com uma situação final específica. (Função de Contagem Principal)
     """
     
     data_inicio = f'{ano}-01-01'
@@ -140,8 +140,9 @@ st.header("Propostas de Emenda à Constituição (2023 vs. 2024)")
 # --- BOTÃO DE LIMPEZA DE CACHE ---
 with st.sidebar:
     st.markdown("### 🛠️ Ferramentas")
-    st.button("Resetar Dados (Limpar Cache da API)", on_click=limpar_cache_api)
-    st.caption("Use se os dados não se atualizarem ou se o Streamlit falhar.")
+    # Este botão é vital para tentar obter dados corretos
+    st.button("Resetar Dados (Limpar Cache da API)", on_click=limpar_cache_api) 
+    st.caption("Use se os dados globais parecerem 100% de sucesso ou zero.")
 
 st.markdown("---")
 
@@ -171,11 +172,10 @@ if df_pec_mensal.empty or df_pec_mensal['Total'].sum() == 0:
     st.stop() 
 
 total_pec_anual = df_pec_mensal['Total'].sum()
-total_aprovado_final = contar_pecs_por_situacao(ano_selecionado, SITUACAO_APROVADA_FINAL) # Para KPI
+total_aprovado_final = contar_pecs_por_situacao(ano_selecionado, SITUACAO_APROVADA_FINAL) 
 
 # --- GRÁFICO 1: PECs (Emendas Constitucionais) ---
 st.subheader(f"1. Volume Mensal de Emendas à Constituição (PECs) em {ano_selecionado}")
-st.caption("Gráfico de Barras: Número de Propostas de Emenda à Constituição (PECs) apresentadas por mês.")
 
 df_pec_mensal = df_pec_mensal.sort_values(by='Ordem_Mes')
 
@@ -202,7 +202,7 @@ col2.metric(f"Total Aprovado Final (KPI):", f"{total_aprovado_final:,}".replace(
 st.markdown("---")
 
 # =========================================================================
-# SEÇÃO 2: GRÁFICO DE PIZZA (Sucesso vs. Insucesso - REALISTA)
+# SEÇÃO 2: GRÁFICO DE PIZZA (Sucesso vs. Insucesso - CORRIGIDO)
 # =========================================================================
 
 st.subheader(f"2. Situação de Tramitação das PECs em {ano_selecionado}")
@@ -210,17 +210,16 @@ st.caption("Análise de efetividade jurídica: Compara as PECs que foram arquiva
 
 # 1. BUSCA DE DADOS REAIS PARA A PIZZA
 with st.spinner("Buscando dados de situação (Arquivamento e Aprovação Final)..."):
-    # Total Aprovado (Sucesso)
-    total_aprovado = contar_pecs_por_situacao(ano_selecionado, SITUACAO_APROVADA_FINAL)
+    
+    total_aprovado = total_aprovado_final # Já buscado acima
     
     # Total Arquivado
     total_arquivado = contar_pecs_por_situacao(ano_selecionado, SITUACAO_ARQUIVADA)
 
-# 2. CALCULA O QUE ESTÁ 'EM TRAMITAÇÃO/OUTRAS'
-# Isso representa o vasto campo de insucesso/sucesso potencial
+# 2. CALCULA O QUE ESTÁ 'EM TRAMITAÇÃO/OUTRAS' (Grande maioria)
 total_tramitacao = total_pec_anual - total_aprovado - total_arquivado
 
-# Garante que o número não seja negativo (em caso de erro na API)
+# Garante que o número não seja negativo
 if total_tramitacao < 0:
     total_tramitacao = 0
 
@@ -237,6 +236,9 @@ df_situacao = df_situacao[df_situacao['Total'] > 0]
 if df_situacao.empty:
     st.info("Não foi possível contabilizar as situações finais. Dados insuficientes para o gráfico de pizza.")
 else:
+    # AVALIAÇÃO DA REALIDADE: Se Arquivada for 0, o gráfico mostrará a verdade da base.
+    st.warning("⚠️ Se a fatia 'Arquivada/Rejeitada' for zero, a PEC falha ainda está na situação 'Em Tramitação' na base de dados da Câmara.")
+    
     fig_pizza_situacao = px.pie(
         df_situacao,
         values='Total',

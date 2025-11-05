@@ -3,244 +3,183 @@ import pandas as pd
 import plotly.express as px
 import requests
 import time
-from urllib.parse import quote
+from datetime import date
+from dateutil.relativedelta import relativedelta
 
 # --- 1. CONFIGURAÇÃO E VARIÁVEIS GLOBAIS ---
 
-URL_BASE = "https://dadosabertos.camara.leg.br/api/v2/"
-# Para identificar a votação em Plenário (ID do Órgão)
-ID_ORGAO_PLENARIO = 180 
+# Endpoint da API REST v2 da Câmara dos Deputados
+URL_API_PROPOSICOES_V2 = "https://dadosabertos.camara.leg.br/api/v2/proposicoes"
 
-# --- 2. FUNÇÕES DE BUSCA DA API (DADOS REAIS E ENCADEDOS) ---
+# Códigos de Tipos de Proposição para o filtro da API
+CODIGO_PL = 207      # Projeto de Lei (PL)
+CODIGO_PEC = 304     # Proposta de Emenda à Constituição (PEC)
+
+# Define o ano atual para limitar a busca de 2024
+ANO_ATUAL = date.today().year
+MES_ATUAL = date.today().month
+
+# --- 2. FUNÇÕES DE BUSCA (DADOS REAIS E MENSAIS) ---
 
 def limpar_cache_api():
-    """Limpa o cache do Streamlit."""
+    """Limpa o cache do Streamlit e reinicia a execução."""
     st.cache_data.clear()
     st.rerun()
 
-@st.cache_data(ttl=3600)
-def buscar_id_proposicao(sigla_tipo, numero, ano):
+@st.cache_data(ttl=3600) # Cache de 1 hora para evitar chamadas repetidas à API
+def buscar_proposicoes_mensais_por_tipo(ano, cod_tipo, nome_tipo):
     """
-    Busca o ID interno da proposição pelo número, tipo e ano.
-    Ex: PL 1234/2023.
+    Busca o total de proposições de um tipo específico (PL ou PEC) para cada mês do ano.
+    A função lida com paginação e limita a busca até o mês atual em 2024.
     """
-    params = {
-        'siglaTipo': sigla_tipo,
-        'numero': numero,
-        'ano': ano,
-        'ordem': 'ASC',
-        'ordenarPor': 'id',
-        'itens': 1,
-    }
+    dados_mensais = []
     
-    url = URL_BASE + "proposicoes"
-    
-    try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        dados = response.json().get('dados', [])
+    # Define o limite final da busca
+    if ano == ANO_ATUAL:
+        mes_limite = MES_ATUAL
+    else:
+        mes_limite = 12
+
+    # Itera sobre os meses de Janeiro (1) até o mês limite (12 ou mês atual de 2024)
+    for mes in range(1, mes_limite + 1):
         
-        if dados:
-            return dados[0]['id']
-        return None
+        # Define as datas de início e fim do mês
+        data_inicio = date(ano, mes, 1)
         
-    except requests.exceptions.RequestException:
-        return None
-
-@st.cache_data(ttl=3600)
-def buscar_votacoes_proposicao(id_proposicao):
-    """
-    Busca todas as votações nominais em Plenário para um ID de proposição.
-    """
-    # Endpoint para buscar votações de uma proposição
-    url = f"{URL_BASE}proposicoes/{id_proposicao}/votacoes"
-    
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        votacoes = response.json().get('dados', [])
+        # Calcula o último dia do mês
+        if mes == 12:
+            data_fim = date(ano, 12, 31)
+        else:
+            data_fim = data_inicio + relativedelta(months=1) - relativedelta(days=1)
         
-        # Filtra a última votação nominal que ocorreu no Plenário
-        # (O ideal é buscar a última votação nominal aberta no órgão 180)
-        votacoes_plenario = [
-            v for v in votacoes 
-            if v.get('nomeOrgao') == 'Plenário' and v.get('data') is not None
-        ]
-
-        if votacoes_plenario:
-            # Retorna o ID da votação mais recente no Plenário
-            votacoes_plenario.sort(key=lambda x: x['data'], reverse=True)
-            return votacoes_plenario[0]['id']
+        # Se estiver em 2024, a data final não pode passar do dia de hoje
+        if ano == ANO_ATUAL and data_fim > date.today():
+             data_fim = date.today()
         
-        return None
+        params = {
+            'dataInicio': data_inicio.strftime('%Y-%m-%d'),
+            'dataFim': data_fim.strftime('%Y-%m-%d'),
+            'codTipo': cod_tipo,
+            'ordenarPor': 'id',
+            'itens': 100, # Número de itens por página
+        }
         
-    except requests.exceptions.RequestException:
-        return None
-
-@st.cache_data(ttl=3600)
-def buscar_votos_nominais(id_votacao):
-    """
-    Busca a lista completa de votos (Deputado, UF, Partido, Voto) para um ID de votação.
-    """
-    url = f"{URL_BASE}votacoes/{id_votacao}/votos"
-    
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        return response.json().get('dados', [])
+        total_no_mes = 0
+        pagina = 1
         
-    except requests.exceptions.RequestException:
-        return None
+        # Lógica de paginação para contar o total
+        while True:
+            try:
+                response = requests.get(URL_API_PROPOSICOES_V2, params={**params, 'pagina': pagina}, timeout=10)
+                response.raise_for_status() 
+                dados = response.json().get('dados', [])
+                total_no_mes += len(dados)
+                
+                # Se a página não estiver completa, é a última página
+                if len(dados) < params['itens']:
+                    break
+                
+                pagina += 1
+                # Pequena pausa para ser gentil com o servidor da API
+                time.sleep(0.05) 
+                
+            except requests.exceptions.RequestException:
+                # Retorna dados parciais em caso de falha na API
+                break 
+                
+        # Adiciona o resultado
+        dados_mensais.append({
+            'Mês': date(2000, mes, 1).strftime('%b/%Y' if ano != ANO_ATUAL else '%b'), # Exibe o nome do mês
+            'Ordem_Mes': mes,
+            'Total': total_no_mes,
+            'Tipo': nome_tipo
+        })
+            
+    return pd.DataFrame(dados_mensais)
 
-# --- 3. FUNÇÕES DE PROCESSAMENTO E GRÁFICOS ---
+# --- 3. INTERFACE STREAMLIT PRINCIPAL ---
 
-def processar_votos(dados_votos):
-    """Transforma os dados brutos de votos em um DataFrame para visualização."""
-    
-    # Mapeamento do resultado do voto
-    mapeamento_voto = {
-        'Sim': 'A Favor',
-        'Não': 'Contra',
-        'Abstenção': 'Abstenção',
-        'Obstrução': 'Obstrução/Ausente',
-        'Ausente': 'Obstrução/Ausente',
-        # Inclui outros votos que podem aparecer na API, como "Art. 17"
-    }
+st.set_page_config(layout="wide", page_title="Análise Legislativa - Câmara dos Deputados")
 
-    df = pd.DataFrame(dados_votos)
-    
-    # Filtra e renomeia colunas
-    df_filtrado = df[['deputado_nome', 'deputado_uf', 'deputado_partido', 'voto']]
-    df_filtrado.columns = ['Nome do Deputado', 'UF', 'Partido', 'Voto Bruto']
-    
-    # Normaliza o voto para o gráfico
-    df_filtrado['Voto Final'] = df_filtrado['Voto Bruto'].apply(
-        lambda x: mapeamento_voto.get(x, 'Outro/Não Votou')
-    )
-    
-    # Exclui votos não relevantes para o gráfico principal (opcional)
-    df_plot = df_filtrado[~df_filtrado['Voto Final'].isin(['Outro/Não Votou'])]
-
-    return df_filtrado, df_plot
-
-def criar_grafico_pizza(df_plot):
-    """Gráfico de Pizza da Proporção dos Votos."""
-    
-    # Agrupa por Voto Final
-    df_contagem = df_plot['Voto Final'].value_counts().reset_index()
-    df_contagem.columns = ['Voto', 'Total']
-
-    fig = px.pie(
-        df_contagem,
-        values='Total',
-        names='Voto',
-        title='Proporção dos Votos Nominais em Plenário',
-        hole=.5,
-        color='Voto',
-        color_discrete_map={'A Favor': 'green', 'Contra': 'red', 'Abstenção': 'orange', 'Obstrução/Ausente': 'grey'}
-    )
-    fig.update_traces(textinfo='label+percent', pull=[0.1 if v == 'A Favor' or v == 'Contra' else 0 for v in df_contagem['Voto']])
-    return fig
-
-# --- 4. INTERFACE STREAMLIT PRINCIPAL ---
-
-st.set_page_config(layout="wide", page_title="Monitor de Votação Nominal")
-
-st.title("👁️‍🗨️ Monitor de Votação Nominal (Dados Reais)")
-st.header("Fiscalização de Parlamentares via API da Câmara")
+st.title("🏛️ Análise da Produtividade Legislativa")
+st.header("Câmara dos Deputados: Comparativo 2023 vs. 2024")
 
 # --- BOTÃO DE LIMPEZA DE CACHE ---
 with st.sidebar:
     st.markdown("### 🛠️ Ferramentas")
     st.button("Resetar Dados (Limpar Cache da API)", on_click=limpar_cache_api)
-    st.caption("Use se a busca falhar repetidamente ou os dados não se atualizarem.")
+    st.caption("Use se os dados não se atualizarem ou se o Streamlit falhar.")
+
+st.markdown("---")
+
+# --- SELETOR DE ANO ---
+st.subheader("Selecione o Ano para Análise:")
+anos_disponiveis = [ANO_ATUAL, 2023] 
+
+# st.radio para seleção de ano (horizontal, como solicitado)
+ano_selecionado = st.radio(
+    "Escolha o ano base para visualizar as informações:",
+    anos_disponiveis,
+    index=0, 
+    format_func=lambda x: f"Ano {x}", # Formata a exibição do botão
+    horizontal=True
+)
+
+st.markdown("---")
+
+# --- BUSCA E PROCESSAMENTO DE DADOS ---
+
+with st.spinner(f'Buscando dados reais da API da Câmara para {ano_selecionado}...'):
+    # Busca dados de PL
+    df_pl = buscar_proposicoes_mensais_por_tipo(ano_selecionado, CODIGO_PL, 'Projeto de Lei (PL)')
+    
+    # Busca dados de PEC
+    df_pec = buscar_proposicoes_mensais_por_tipo(ano_selecionado, CODIGO_PEC, 'Emenda à Constituição (PEC)')
+
+# Combina os DataFrames
+df_combinado = pd.concat([df_pl, df_pec]).reset_index(drop=True)
+
+
+if df_combinado.empty or df_combinado['Total'].sum() == 0:
+    st.error(f"Não foi possível carregar dados da API para o ano de {ano_selecionado}.")
+else:
+    # Garante que a ordem dos meses está correta para o gráfico
+    df_combinado = df_combinado.sort_values(by='Ordem_Mes')
+
+    # --- GRÁFICO 1: VOLUME MENSAL (PL vs PEC) ---
+    st.subheader(f"1. Volume Mensal de Proposições Apresentadas em {ano_selecionado}")
+    st.caption("Gráfico de Barras Agrupadas: Comparação entre a produção de Leis Ordinárias (PL) e Emendas Constitucionais (PEC).")
+
+    fig_mensal = px.bar(
+        df_combinado,
+        x='Mês',
+        y='Total',
+        color='Tipo',
+        barmode='group', # Agrupa as barras lado a lado
+        title=f'Proposições (PL e PEC) Apresentadas Mês a Mês em {ano_selecionado}',
+        labels={'Total': 'Número de Proposições', 'Mês': 'Mês de Apresentação'},
+        color_discrete_map={
+            'Projeto de Lei (PL)': 'blue',
+            'Emenda à Constituição (PEC)': 'red'
+        }
+    )
+    
+    # Ajusta o layout para melhor visualização
+    fig_mensal.update_layout(xaxis={'categoryorder': 'array', 'categoryarray': df_combinado['Mês'].unique()})
+    
+    st.plotly_chart(fig_mensal, use_container_width=True)
+
+    # --- MÉTRICAS CHAVE (KPIs) ---
+    total_pl_anual = df_pl['Total'].sum()
+    total_pec_anual = df_pec['Total'].sum()
+
+    st.markdown("#### Totais Acumulados no Ano:")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("PLs Apresentadas", f"{total_pl_anual:,}".replace(",", "."))
+    col2.metric("PECs Apresentadas", f"{total_pec_anual:,}".replace(",", "."))
+    col3.metric("Total Geral", f"{total_pl_anual + total_pec_anual:,}".replace(",", "."))
+
     st.markdown("---")
 
-# --- BLOCO PRINCIPAL DE PESQUISA ---
-
-st.subheader("Pesquisa de Proposição Legislativa")
-st.caption("Digite o número exato do Projeto de Lei (PL ou PEC) para buscar a última votação nominal em Plenário.")
-
-col_input, col_btn = st.columns([3, 1])
-
-with col_input:
-    proposicao_input = st.text_input("Número da Proposição (Ex: PL 1234/2023)", 
-                                    placeholder="PL 1234/2023 ou PEC 01/2023")
-
-with col_btn:
-    # Adiciona um espaço para alinhar o botão
-    st.markdown("<br>", unsafe_allow_html=True) 
-    botao_buscar = st.button("Buscar Votação", type="primary")
-
-if botao_buscar and proposicao_input:
-    
-    # 1. PARSE DA ENTRADA
-    try:
-        # Tenta dividir a entrada: [PL, 1234, 2023]
-        partes = proposicao_input.upper().replace("/", " ").split()
-        sigla_tipo = partes[0].replace('PEC', 'PEC').replace('PL', 'PL').replace('PLP', 'PLP')
-        numero = int(partes[1])
-        ano = int(partes[2])
-    except:
-        st.error("Formato incorreto. Use o formato: [SIGLA NÚMERO/ANO], Ex: PL 1234/2023.")
-        st.stop()
-
-    with st.spinner(f"Buscando a votação nominal para {sigla_tipo} {numero}/{ano} na API..."):
-        
-        # 2. BUSCA ID DA PROPOSIÇÃO
-        id_proposicao = buscar_id_proposicao(sigla_tipo, numero, ano)
-        
-        if id_proposicao is None:
-            st.error(f"Proposição '{sigla_tipo} {numero}/{ano}' não encontrada na base de dados da Câmara.")
-            st.stop()
-        
-        # 3. BUSCA ID DA VOTAÇÃO EM PLENÁRIO
-        id_votacao = buscar_votacoes_proposicao(id_proposicao)
-
-        if id_votacao is None:
-            st.error(f"Nenhuma votação nominal recente em Plenário foi encontrada para esta proposição (ID: {id_proposicao}).")
-            st.stop()
-
-        # 4. BUSCA VOTOS NOMINAIS (DADOS FINAIS)
-        dados_votos = buscar_votos_nominais(id_votacao)
-
-        if dados_votos is None or not dados_votos:
-            st.error("Falha ao buscar a lista de votos ou votação não foi nominal/aberta.")
-            st.stop()
-            
-        # 5. PROCESSAMENTO E GERAÇÃO DE GRÁFICOS
-        df_tabela, df_plot = processar_votos(dados_votos)
-        
-        st.success("Votação nominal encontrada e processada com sucesso!")
-        
-        # --- OUTPUT KPI e GRÁFICO ---
-        
-        # Totalização de Votos
-        votos_contados = df_plot['Voto Final'].value_counts()
-        total_votantes = votos_contados.sum()
-        votos_sim = votos_contados.get('A Favor', 0)
-        votos_nao = votos_contados.get('Contra', 0)
-        
-        st.subheader(f"Resultado em Plenário (Votação {id_votacao})")
-        
-        col_s, col_n, col_abs, col_total = st.columns(4)
-        col_s.metric("Votos 'Sim'", votos_sim, delta=f"+{round((votos_sim/total_votantes)*100, 1)}%" if total_votantes else None, delta_color="normal")
-        col_n.metric("Votos 'Não'", votos_nao, delta=f"-{round((votos_nao/total_votantes)*100, 1)}%" if total_votantes else None, delta_color="inverse")
-        col_abs.metric("Abstenções/Ausentes", votos_contados.get('Abstenção', 0) + votos_contados.get('Obstrução/Ausente', 0), delta_color="off")
-        col_total.metric("Total de Votos Registrados", total_votantes)
-        
-        st.markdown("---")
-
-        # Gráfico de Pizza
-        st.subheader("1. Proporção dos Votos Registrados")
-        fig_pizza = criar_grafico_pizza(df_plot)
-        st.plotly_chart(fig_pizza, use_container_width=True)
-
-        # Tabela Interativa
-        st.subheader("2. Detalhamento Nominal da Votação")
-        st.caption("Use os cabeçalhos das colunas para ordenar a lista (por Partido ou UF) e filtre o voto nominal.")
-        st.dataframe(
-            df_tabela[['Nome do Deputado', 'Partido', 'UF', 'Voto Final']].sort_values(by='Voto Final', ascending=False),
-            use_container_width=True,
-            hide_index=True
-        )
+    st.markdown("### Próximos Passos:")
+    st.markdown("Com esta estrutura pronta, podemos adicionar outras análises (por exemplo, a distribuição partidária, o andamento das proposições) logo abaixo deste gráfico.")

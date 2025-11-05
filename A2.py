@@ -15,7 +15,7 @@ URL_API_PROPOSICOES_V2 = "https://dadosabertos.camara.leg.br/api/v2/proposicoes"
 CODIGO_PL = 207      # Projeto de Lei (PL)
 CODIGO_PEC = 304     # Proposta de Emenda à Constituição (PEC)
 
-# O ano atual é 2025 (e o código já lida com a limitação de dados para o ano atual, se fosse necessário)
+# O ano atual é 2025
 ANO_ATUAL_REAL = date.today().year
 MES_ATUAL = date.today().month
 
@@ -26,19 +26,17 @@ def limpar_cache_api():
     st.cache_data.clear()
     st.rerun()
 
-@st.cache_data(ttl=3600) # Cache de 1 hora para evitar chamadas repetidas à API
+@st.cache_data(ttl=3600) # Cache de 1 hora
 def buscar_proposicoes_mensais_por_tipo(ano, cod_tipo, nome_tipo):
     """
     Busca o total de proposições de um tipo específico (PL ou PEC) para cada mês do ano.
-    A função lida com paginação e limita a busca até o mês atual em 2025.
     """
     dados_mensais = []
     
-    # Define o limite final da busca
+    # Se for o ano atual (2025), limitamos a busca até o mês atual (Novembro)
     if ano == ANO_ATUAL_REAL:
-        # Se for o ano atual (2025), limitamos a busca até o mês de Outubro (10), 
-        # que é o último mês completo antes de Novembro.
-        mes_limite = 10 
+        # Note: Hoje é Novembro/2025, então a busca vai até 10 (Outubro completo) + 1 (Novembro, que está em andamento)
+        mes_limite = MES_ATUAL 
     else:
         mes_limite = 12
 
@@ -48,8 +46,10 @@ def buscar_proposicoes_mensais_por_tipo(ano, cod_tipo, nome_tipo):
         # Define as datas de início e fim do mês
         data_inicio = date(ano, mes, 1)
         
-        # Calcula o último dia do mês
-        if mes == 12:
+        # Calcula o último dia do mês (garantindo que não vá além da data de hoje)
+        if mes == MES_ATUAL and ano == ANO_ATUAL_REAL:
+             data_fim = date.today()
+        elif mes == 12:
             data_fim = date(ano, 12, 31)
         else:
             data_fim = data_inicio + relativedelta(months=1) - relativedelta(days=1)
@@ -111,7 +111,7 @@ st.markdown("---")
 
 # --- SELETOR DE ANO ---
 st.subheader("Selecione o Ano para Análise:")
-# CORRIGIDO: Lista explícita de 2024 e 2023
+# Lista explícita de 2024 e 2023
 anos_disponiveis = [2024, 2023] 
 
 # st.radio para seleção de ano (horizontal, como solicitado)
@@ -153,7 +153,7 @@ else:
         x='Mês',
         y='Total',
         color='Tipo',
-        barmode='group', # Agrupa as barras lado a lado
+        barmode='group', # ESSA LINHA GARANTE QUE ELES ESTÃO LADO A LADO
         title=f'Proposições (PL e PEC) Apresentadas Mês a Mês em {ano_selecionado}',
         labels={'Total': 'Número de Proposições', 'Mês': 'Mês de Apresentação'},
         color_discrete_map={

@@ -2,219 +2,245 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import requests
-import json
 import time
-from datetime import date
-from calendar import monthrange
-import numpy as np # Importado para evitar erro se estiver faltando
+from urllib.parse import quote
 
-# --- 1. CONFIGURAÇÃO E DADOS BASE ---
+# --- 1. CONFIGURAÇÃO E VARIÁVEIS GLOBAIS ---
 
-# O SEU TOKEN DE ACESSO É OBRIGATÓRIO PARA ESTA API
-TOKEN_API = "SEU_TOKEN_API_AQUI" 
-URL_API_TRANSPARENCIA = "https://api.portaldatransparencia.gov.br/api-de-dados"
-ENDPOINT_BOLSA_FAMILIA = "/novo-bolsa-familia-sacado-beneficiario-por-municipio"
-URL_BRASIL_API = "https://brasilapi.com.br/api/ibge/municipios/v1/"
+URL_BASE = "https://dadosabertos.camara.leg.br/api/v2/"
+# Para identificar a votação em Plenário (ID do Órgão)
+ID_ORGAO_PLENARIO = 180 
 
-MESES = {
-    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho",
-    7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
-}
+# --- 2. FUNÇÕES DE BUSCA DA API (DADOS REAIS E ENCADEDOS) ---
 
-# Lista de UFs para o Selectbox
-UFS_BRASIL = [
-    'AC', 'AL', 'AM', 'AP', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MG', 'MS',
-    'MT', 'PA', 'PB', 'PE', 'PI', 'PR', 'RJ', 'RN', 'RO', 'RR', 'RS', 'SC',
-    'SE', 'SP', 'TO'
-]
-
-# --- 2. FUNÇÕES DE BUSCA DE DADOS (BRASILAPI E TRANSPARÊNCIA) ---
+def limpar_cache_api():
+    """Limpa o cache do Streamlit."""
+    st.cache_data.clear()
+    st.rerun()
 
 @st.cache_data(ttl=3600)
-def buscar_municipios_por_uf(uf):
-    """Consulta a BrasilAPI para obter a lista de municípios e seus IBGEs."""
-    try:
-        url = f"{URL_BRASIL_API}{uf}"
-        response = requests.get(url)
-        response.raise_for_status()
-        dados = response.json()
-        
-        # Cria um dicionário: {Nome do Município: Código IBGE}
-        municipios_dict = {
-            mun['nome']: str(mun['codigo_ibge']) 
-            for mun in dados 
-            if 'codigo_ibge' in mun and mun['codigo_ibge']
-        }
-        return municipios_dict
-    except Exception as e:
-        st.error(f"Erro ao buscar lista de municípios da BrasilAPI: {e}")
-        return {}
-
-@st.cache_data(ttl=3600)
-def buscar_dados_bolsa_familia(codigo_ibge, ano, mes):
-    """Consulta a API da Transparência por município, ano e mês (100% Real)."""
-    
-    if TOKEN_API == "SEU_TOKEN_API_AQUI":
-        st.error("ERRO: Por favor, substitua 'SEU_TOKEN_API_AQUI' pelo seu token real.")
-        return None
-    
-    mes_ano = f"{ano}{mes:02d}"
-    
-    headers = {
-        'Accept': 'application/json',
-        'chave-api-dados': TOKEN_API 
+def buscar_id_proposicao(sigla_tipo, numero, ano):
+    """
+    Busca o ID interno da proposição pelo número, tipo e ano.
+    Ex: PL 1234/2023.
+    """
+    params = {
+        'siglaTipo': sigla_tipo,
+        'numero': numero,
+        'ano': ano,
+        'ordem': 'ASC',
+        'ordenarPor': 'id',
+        'itens': 1,
     }
     
-    url_consulta = f"{URL_API_TRANSPARENCIA}{ENDPOINT_BOLSA_FAMILIA}?codigoIbge={codigo_ibge}&mesAno={mes_ano}"
+    url = URL_BASE + "proposicoes"
     
     try:
-        response = requests.get(url_consulta, headers=headers)
-        response.raise_for_status() 
-        dados = response.json()
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        dados = response.json().get('dados', [])
         
-        if isinstance(dados, list):
-             return dados
-        return []
-
-    except requests.exceptions.HTTPError as e:
-        # Erro 403: Token incorreto. Erro 404: Dado não encontrado (válido).
-        if e.response.status_code == 403:
-             st.error("Erro 403: Acesso Negado. Verifique se o seu Token de Acesso está correto.")
-        elif e.response.status_code == 404:
-            st.warning("Dados não encontrados para esta combinação (Município/Mês/Ano).")
-            return [] # Retorna lista vazia em caso de 404
-        else:
-             st.error(f"Erro na API ({e.response.status_code}): Servidor instável ou sem dados para o período.")
+        if dados:
+            return dados[0]['id']
         return None
-    except Exception as e:
-        st.error(f"Erro na requisição: {e}")
+        
+    except requests.exceptions.RequestException:
         return None
 
 @st.cache_data(ttl=3600)
-def buscar_historico_anual(codigo_ibge, ano):
-    """Busca o volume de beneficiários para todos os 12 meses do ano selecionado (100% Real)."""
+def buscar_votacoes_proposicao(id_proposicao):
+    """
+    Busca todas as votações nominais em Plenário para um ID de proposição.
+    """
+    # Endpoint para buscar votações de uma proposição
+    url = f"{URL_BASE}proposicoes/{id_proposicao}/votacoes"
     
-    dados_historico = []
-    hoje = date.today()
-    limite_mes = 12
-    if ano == hoje.year:
-        limite_mes = hoje.month 
-    
-    
-    for mes in range(1, limite_mes + 1):
-        # A função buscar_dados_bolsa_familia é chamada para cada mês
-        dados_mes = buscar_dados_bolsa_familia(codigo_ibge, ano, mes)
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        votacoes = response.json().get('dados', [])
         
-        total_beneficiarios = len(dados_mes) if dados_mes else 0
+        # Filtra a última votação nominal que ocorreu no Plenário
+        # (O ideal é buscar a última votação nominal aberta no órgão 180)
+        votacoes_plenario = [
+            v for v in votacoes 
+            if v.get('nomeOrgao') == 'Plenário' and v.get('data') is not None
+        ]
+
+        if votacoes_plenario:
+            # Retorna o ID da votação mais recente no Plenário
+            votacoes_plenario.sort(key=lambda x: x['data'], reverse=True)
+            return votacoes_plenario[0]['id']
         
-        dados_historico.append({
-            'Mes_Num': mes,
-            'Mês': MESES[mes],
-            'Beneficiários Sacados': total_beneficiarios
-        })
-        time.sleep(0.1) # Pausa para respeitar o limite de requisições da API
+        return None
         
-    return pd.DataFrame(dados_historico)
+    except requests.exceptions.RequestException:
+        return None
 
-
-# --- 3. FUNÇÕES DE GERAÇÃO DE GRÁFICOS ---
-
-def criar_grafico_historico(df_historico):
-    """Gráfico de Série Histórica de Beneficiários Sacados ao longo do ano."""
+@st.cache_data(ttl=3600)
+def buscar_votos_nominais(id_votacao):
+    """
+    Busca a lista completa de votos (Deputado, UF, Partido, Voto) para um ID de votação.
+    """
+    url = f"{URL_BASE}votacoes/{id_votacao}/votos"
     
-    fig = px.line(
-        df_historico,
-        x='Mês',
-        y='Beneficiários Sacados',
-        markers=True,
-        title='Histórico Mensal de Beneficiários Sacados (Série Temporal)',
-        labels={'Beneficiários Sacados': 'Total de Beneficiários'}
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.json().get('dados', [])
+        
+    except requests.exceptions.RequestException:
+        return None
+
+# --- 3. FUNÇÕES DE PROCESSAMENTO E GRÁFICOS ---
+
+def processar_votos(dados_votos):
+    """Transforma os dados brutos de votos em um DataFrame para visualização."""
+    
+    # Mapeamento do resultado do voto
+    mapeamento_voto = {
+        'Sim': 'A Favor',
+        'Não': 'Contra',
+        'Abstenção': 'Abstenção',
+        'Obstrução': 'Obstrução/Ausente',
+        'Ausente': 'Obstrução/Ausente',
+        # Inclui outros votos que podem aparecer na API, como "Art. 17"
+    }
+
+    df = pd.DataFrame(dados_votos)
+    
+    # Filtra e renomeia colunas
+    df_filtrado = df[['deputado_nome', 'deputado_uf', 'deputado_partido', 'voto']]
+    df_filtrado.columns = ['Nome do Deputado', 'UF', 'Partido', 'Voto Bruto']
+    
+    # Normaliza o voto para o gráfico
+    df_filtrado['Voto Final'] = df_filtrado['Voto Bruto'].apply(
+        lambda x: mapeamento_voto.get(x, 'Outro/Não Votou')
     )
-    fig.update_xaxes(categoryorder='array', categoryarray=list(MESES.values()))
+    
+    # Exclui votos não relevantes para o gráfico principal (opcional)
+    df_plot = df_filtrado[~df_filtrado['Voto Final'].isin(['Outro/Não Votou'])]
+
+    return df_filtrado, df_plot
+
+def criar_grafico_pizza(df_plot):
+    """Gráfico de Pizza da Proporção dos Votos."""
+    
+    # Agrupa por Voto Final
+    df_contagem = df_plot['Voto Final'].value_counts().reset_index()
+    df_contagem.columns = ['Voto', 'Total']
+
+    fig = px.pie(
+        df_contagem,
+        values='Total',
+        names='Voto',
+        title='Proporção dos Votos Nominais em Plenário',
+        hole=.5,
+        color='Voto',
+        color_discrete_map={'A Favor': 'green', 'Contra': 'red', 'Abstenção': 'orange', 'Obstrução/Ausente': 'grey'}
+    )
+    fig.update_traces(textinfo='label+percent', pull=[0.1 if v == 'A Favor' or v == 'Contra' else 0 for v in df_contagem['Voto']])
     return fig
 
 # --- 4. INTERFACE STREAMLIT PRINCIPAL ---
 
-st.set_page_config(layout="wide", page_title="Monitor Bolsa Família (Dados Reais)")
+st.set_page_config(layout="wide", page_title="Monitor de Votação Nominal")
 
-st.title("💸 Monitor de Transparência: Saque do Novo Bolsa Família")
-st.header("Análise por Município - Dados Reais CGU")
+st.title("👁️‍🗨️ Monitor de Votação Nominal (Dados Reais)")
+st.header("Fiscalização de Parlamentares via API da Câmara")
 
-# --- SIDEBAR DE FILTROS ---
+# --- BOTÃO DE LIMPEZA DE CACHE ---
 with st.sidebar:
-    st.markdown("### 🛠️ Configurações")
-    st.button("Resetar Dados (Limpar Cache da API)", on_click=lambda: st.cache_data.clear() or st.rerun())
-    st.caption("Clique se os dados não se atualizarem.")
+    st.markdown("### 🛠️ Ferramentas")
+    st.button("Resetar Dados (Limpar Cache da API)", on_click=limpar_cache_api)
+    st.caption("Use se a busca falhar repetidamente ou os dados não se atualizarem.")
     st.markdown("---")
 
-    st.subheader("Filtros de Consulta")
+# --- BLOCO PRINCIPAL DE PESQUISA ---
 
-    # 1. INPUT: Seleção de Estado (UF)
-    uf_selecionada = st.selectbox("Estado (UF):", UFS_BRASIL, index=18) # RJ como padrão
+st.subheader("Pesquisa de Proposição Legislativa")
+st.caption("Digite o número exato do Projeto de Lei (PL ou PEC) para buscar a última votação nominal em Plenário.")
 
-    # 2. BUSCA DE MUNICÍPIOS (Chama a BrasilAPI)
-    municipios_disponiveis = buscar_municipios_por_uf(uf_selecionada)
+col_input, col_btn = st.columns([3, 1])
+
+with col_input:
+    proposicao_input = st.text_input("Número da Proposição (Ex: PL 1234/2023)", 
+                                    placeholder="PL 1234/2023 ou PEC 01/2023")
+
+with col_btn:
+    # Adiciona um espaço para alinhar o botão
+    st.markdown("<br>", unsafe_allow_html=True) 
+    botao_buscar = st.button("Buscar Votação", type="primary")
+
+if botao_buscar and proposicao_input:
     
-    # 3. INPUT: Seleção de Município
-    municipio_selecionado_nome = st.selectbox(
-        "Município:", 
-        list(municipios_disponiveis.keys())
-    )
-    
-    # 4. BUSCA DO IBGE (Automática)
-    codigo_ibge_selecionado = municipios_disponiveis.get(municipio_selecionado_nome)
-    
-    # 5. INPUT: Seleção de Ano
-    ano_selecionado = st.selectbox("Ano:", [2024, 2023])
+    # 1. PARSE DA ENTRADA
+    try:
+        # Tenta dividir a entrada: [PL, 1234, 2023]
+        partes = proposicao_input.upper().replace("/", " ").split()
+        sigla_tipo = partes[0].replace('PEC', 'PEC').replace('PL', 'PL').replace('PLP', 'PLP')
+        numero = int(partes[1])
+        ano = int(partes[2])
+    except:
+        st.error("Formato incorreto. Use o formato: [SIGLA NÚMERO/ANO], Ex: PL 1234/2023.")
+        st.stop()
 
-    # 6. INPUT: Seleção de Mês
-    mes_selecionado_nome = st.selectbox("Mês de Foco:", list(MESES.values()))
-    mes_selecionado_num = {v: k for k, v in MESES.items()}[mes_selecionado_nome]
-
-
-# --- BLOCO PRINCIPAL ---
-
-if not codigo_ibge_selecionado:
-    st.warning("Selecione um município e certifique-se de que o Token da API está configurado.")
-else:
-    st.markdown(f"**Analisando Dados Reais:** {municipio_selecionado_nome} ({uf_selecionada}) | IBGE: {codigo_ibge_selecionado}")
-    st.markdown("---")
-    
-    # --- BUSCA DO MÊS SELECIONADO (MÉTRICA CHAVE) ---
-    with st.spinner(f"1/2 - Buscando dado de {mes_selecionado_nome}/{ano_selecionado} na API..."):
+    with st.spinner(f"Buscando a votação nominal para {sigla_tipo} {numero}/{ano} na API..."):
         
-        # A primeira busca foca apenas no mês selecionado
-        dados_municipio_raw = buscar_dados_bolsa_familia(codigo_ibge_selecionado, ano_selecionado, mes_selecionado_num)
+        # 2. BUSCA ID DA PROPOSIÇÃO
+        id_proposicao = buscar_id_proposicao(sigla_tipo, numero, ano)
         
-        if dados_municipio_raw is None:
-            # Erro já reportado na função (Token ou API)
-            st.stop() 
+        if id_proposicao is None:
+            st.error(f"Proposição '{sigla_tipo} {numero}/{ano}' não encontrada na base de dados da Câmara.")
+            st.stop()
+        
+        # 3. BUSCA ID DA VOTAÇÃO EM PLENÁRIO
+        id_votacao = buscar_votacoes_proposicao(id_proposicao)
 
-        total_beneficiarios_mes = len(dados_municipio_raw)
+        if id_votacao is None:
+            st.error(f"Nenhuma votação nominal recente em Plenário foi encontrada para esta proposição (ID: {id_proposicao}).")
+            st.stop()
+
+        # 4. BUSCA VOTOS NOMINAIS (DADOS FINAIS)
+        dados_votos = buscar_votos_nominais(id_votacao)
+
+        if dados_votos is None or not dados_votos:
+            st.error("Falha ao buscar a lista de votos ou votação não foi nominal/aberta.")
+            st.stop()
+            
+        # 5. PROCESSAMENTO E GERAÇÃO DE GRÁFICOS
+        df_tabela, df_plot = processar_votos(dados_votos)
         
-        # --- GRÁFICO A: MÉTRICA CHAVE ---
-        st.subheader("1. Volume de Beneficiários Sacados (Mês Foco)")
+        st.success("Votação nominal encontrada e processada com sucesso!")
         
-        if total_beneficiarios_mes > 0:
-            st.metric(
-                label=f"Total de Beneficiários que Sacaram em {mes_selecionado_nome}/{ano_selecionado}",
-                value=f"{total_beneficiarios_mes:,}".replace(",", ".")
-            )
-        else:
-             st.info(f"Sem dados de saque encontrados para {municipio_selecionado_nome} em {mes_selecionado_nome}/{ano_selecionado}.")
+        # --- OUTPUT KPI e GRÁFICO ---
+        
+        # Totalização de Votos
+        votos_contados = df_plot['Voto Final'].value_counts()
+        total_votantes = votos_contados.sum()
+        votos_sim = votos_contados.get('A Favor', 0)
+        votos_nao = votos_contados.get('Contra', 0)
+        
+        st.subheader(f"Resultado em Plenário (Votação {id_votacao})")
+        
+        col_s, col_n, col_abs, col_total = st.columns(4)
+        col_s.metric("Votos 'Sim'", votos_sim, delta=f"+{round((votos_sim/total_votantes)*100, 1)}%" if total_votantes else None, delta_color="normal")
+        col_n.metric("Votos 'Não'", votos_nao, delta=f"-{round((votos_nao/total_votantes)*100, 1)}%" if total_votantes else None, delta_color="inverse")
+        col_abs.metric("Abstenções/Ausentes", votos_contados.get('Abstenção', 0) + votos_contados.get('Obstrução/Ausente', 0), delta_color="off")
+        col_total.metric("Total de Votos Registrados", total_votantes)
         
         st.markdown("---")
-        
-        # --- GRÁFICO B: SÉRIE HISTÓRICA (COMPARAÇÃO REAL) ---
-        st.subheader(f"2. Série Histórica Anual de Beneficiários ({ano_selecionado})")
-        st.caption("Análise de variação mensal (Dados 100% Reais).")
 
-        # BUSCA HISTÓRICA (Dados reais para o Gráfico B)
-        with st.spinner(f"2/2 - Buscando série histórica de 12 meses..."):
-            df_historico = buscar_historico_anual(codigo_ibge_selecionado, ano_selecionado)
+        # Gráfico de Pizza
+        st.subheader("1. Proporção dos Votos Registrados")
+        fig_pizza = criar_grafico_pizza(df_plot)
+        st.plotly_chart(fig_pizza, use_container_width=True)
 
-        if not df_historico.empty and df_historico['Beneficiários Sacados'].sum() > 0:
-            fig_b = criar_grafico_historico(df_historico)
-            st.plotly_chart(fig_b, use_container_width=True)
-        else:
-            st.info("Não foi possível carregar o histórico de 12 meses para o município. O IBGE está correto?")
+        # Tabela Interativa
+        st.subheader("2. Detalhamento Nominal da Votação")
+        st.caption("Use os cabeçalhos das colunas para ordenar a lista (por Partido ou UF) e filtre o voto nominal.")
+        st.dataframe(
+            df_tabela[['Nome do Deputado', 'Partido', 'UF', 'Voto Final']].sort_values(by='Voto Final', ascending=False),
+            use_container_width=True,
+            hide_index=True
+        )

@@ -1,231 +1,244 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import numpy as np
-import datetime
+import requests
+from datetime import date
+import time
+from urllib.parse import quote
 
+# --- 1. CONFIGURAÇÃO E VARIÁVEIS GLOBAIS ---
 
-NOME_TRIBUNAL = "TJ do Rio de Janeiro (TJRJ)"
-ENDPOINT_SIMULADO = "https://api-publica.datajud.cnj.jus.br/api_publica_tjrj/_search"
+URL_BASE_PROPOSICOES = "https://dadosabertos.camara.leg.br/api/v2/proposicoes"
+URL_BASE_DEPUTADOS = "https://dadosabertos.camara.leg.br/api/v2/deputados"
+ANO_ATUAL = date.today().year
 
-@st.cache_data
-def carregar_dados_simulados():
+# Códigos de Referência na API (Reais)
+CODIGO_PL = 207      # Projeto de Lei
+CODIGO_PEC = 304     # Proposta de Emenda à Constituição
+SITUACAO_APROVADA = 300  # Transf. em Norma Jurídica / Aprovada nas 2 Casas
+SITUACAO_ARQUIVADA = 239 # Arquivada
+SITUACAO_TODAS = None    # Para contar o total apresentado
+
+# --- 2. FUNÇÕES DE BUSCA DA API (Dados Reais) ---
+
+@st.cache_data(ttl=3600)
+def contar_proposicoes_reais(ano, cod_tipo, id_situacao=None, id_autor=None):
     """
-    Cria um DataFrame que simula o resultado de uma busca massiva na API do CNJ 
-    para processos de MPU (Lei Maria da Penha) no TJRJ, incluindo 2023, 2024 e 2025.
+    Faz a chamada real à API da Câmara para contar proposições, com filtros de
+    Ano, Tipo, Situação e ID do Autor.
     """
-    # 1. Definindo dados base para 2023, 2024 e 2025
-    # NOTA: Os dados de 2025 são gerados até 31/12, a lógica de zeramento será aplicada no gráfico.
-    data_range = pd.to_datetime(pd.date_range(start='2023-01-01', end='2025-12-31', freq='D'))
-    num_registros = 20000 
     
-    datas_ajuizamento = np.random.choice(data_range, num_registros)
- 
-    delta_horas = np.where(
-        np.random.rand(num_registros) < 0.7, 
-        np.random.randint(1, 48, num_registros),
-        np.random.randint(48, 200, num_registros) 
-    )
-    datas_decisao = datas_ajuizamento + pd.to_timedelta(delta_horas, unit='H')
-
-    tipos_mpu = ['Afastamento do Lar', 'Restrição de Contato', 'Suspensão de Posse de Arma', 'Outras']
-    desfechos = ['Proferida (Concedida)', 'Não Proferida (Indeferida)', 'Extinta']
-    desfechos_finais = ['Condenação', 'Absolvição', 'Arquivamento/Extinção']
- 
-    df = pd.DataFrame({
-        'data_ajuizamento': datas_ajuizamento,
-        'data_decisao_mpu': datas_decisao,
-        'tipo_mpu_expedida': np.random.choice(tipos_mpu, num_registros, p=[0.55, 0.30, 0.10, 0.05]),
-        'desfecho': np.random.choice(desfechos, num_registros, p=[0.85, 0.10, 0.05]),
-        'desfecho_final': np.random.choice(desfechos_finais, num_registros, p=[0.45, 0.10, 0.45]),
-        'ano': pd.to_datetime(datas_ajuizamento).year,
-        'mes': pd.to_datetime(datas_ajuizamento).month,
-    })
-    
-    df['status'] = np.where(df['desfecho'] == 'Proferida (Concedida)', 'MPU Proferida', 'MPU Pedida')
-    df['tempo_tramitacao_horas'] = (df['data_decisao_mpu'] - df['data_ajuizamento']).dt.total_seconds() / 3600
-    
-    return df
-
-
-def criar_grafico_2_tempo_segmentado(df_filtrado):
-    """Gráfico 2: Segmenta o tempo médio de expedição em faixas de horas do ANO SELECIONADO."""
-    bins = [0, 24, 48, 72, np.inf]
-    labels = ['0-24h (Meta Jurisdicional)', '24-48h', '48-72h', '>72h (Morosidade)']
-    df_filtrado['faixa_tempo'] = pd.cut(df_filtrado['tempo_tramitacao_horas'], bins=bins, labels=labels, right=False)
-    df_faixas = df_filtrado['faixa_tempo'].value_counts().reset_index()
-    df_faixas.columns = ['Faixa de Tempo', 'Total de Casos']
-    df_faixas['Faixa de Tempo'] = pd.Categorical(df_faixas['Faixa de Tempo'], categories=labels, ordered=True)
-    df_faixas = df_faixas.sort_values('Faixa de Tempo')
-    media_horas = df_filtrado['tempo_tramitacao_horas'].mean()
-    
-    fig = px.bar(df_faixas, x='Faixa de Tempo', y='Total de Casos', color='Faixa de Tempo',
-                 title=f'Distribuição do Tempo de Expedição da Decisão (da MPU)',
-                 color_discrete_sequence=['green', 'gold', 'orange', 'red'])
-    fig.update_layout(xaxis_title="Tempo de Tramitação (Ajuizamento até Decisão)")
-    fig.add_annotation(
-        text=f"Média Geral de Expedição: **{media_horas:.1f} horas**",
-        xref="paper", yref="paper", x=0.5, y=1.05, showarrow=False, font=dict(size=14, color="black")
-    )
-    return fig
-
-def criar_grafico_3_tipos_mpu(df_filtrado):
-    """Gráfico 3: Mostra a proporção de cada tipo de MPU expedida no ANO SELECIONADO."""
-    df_proferidas = df_filtrado[df_filtrado['desfecho'] == 'Proferida (Concedida)']
-    df_tipos = df_proferidas['tipo_mpu_expedida'].value_counts().reset_index()
-    df_tipos.columns = ['Tipo de MPU', 'Total']
-    
-    fig = px.pie(df_tipos, values='Total', names='Tipo de MPU',
-                 title='Proporção dos Tipos de MPU Expedidas (Concedidas)', hole=.4)
-    fig.update_traces(textinfo='label+percent', textfont_size=15)
-    return fig
-
-def criar_grafico_4_mensal(df_filtrado, ano):
-    """
-    Gráfico 4: Mostra MPU Pedidas vs. Proferidas ao longo dos meses do ANO SELECIONADO.
-    APLICA LÓGICA DE ZERAMENTO PARA NOV/DEZ DE 2025.
-    """
-    df_mensal = df_filtrado[df_filtrado['ano'] == ano]
-    
-    # 1. Agrupamento normal
-    df_agrupado = df_mensal.groupby(['mes', 'status']).size().reset_index(name='Total')
-    
-    # 2. LÓGICA DE ZERAMENTO PARA 2025 (NOVEMBRO E DEZEMBRO)
-    # Assumimos que Outubro (10) é o último mês completo
-    if ano == 2025:
-        mes_limite = 10 
-        
-        # Cria um filtro para meses > 10
-        filtro_futuro = df_agrupado['mes'] > mes_limite
-        
-        # Zera o total para Novembro (11) e Dezembro (12)
-        df_agrupado.loc[filtro_futuro, 'Total'] = 0
-        
-    # 3. Mapeamento e Plotagem
-    meses_map = {i: datetime.date(2000, i, 1).strftime('%B') for i in range(1, 13)}
-    df_agrupado['mes_nome'] = df_agrupado['mes'].map(meses_map)
-    
-    fig = px.line(df_agrupado, x='mes_nome', y='Total', color='status',
-                  title=f'Evolução Mensal de MPUs - Pedidos e Resultados ({ano})', markers=True)
-    fig.update_layout(yaxis_title="Volume de MPUs", xaxis_title="Mês", xaxis={'categoryorder':'array', 'categoryarray': [meses_map[i] for i in range(1, 13)]})
-    return fig
-
-def criar_grafico_funil_desfecho(df_filtrado):
-    """Gráfico 5: Cria um Funnel Chart que analisa a taxa de "conversão" do processo."""
-    
-    total_pedidos = len(df_filtrado)
-    total_concedidas = len(df_filtrado[df_filtrado['desfecho'] == 'Proferida (Concedida)'])
-    df_concedidas = df_filtrado[df_filtrado['desfecho'] == 'Proferida (Concedida)']
-    contagem_desfechos = df_concedidas['desfecho_final'].value_counts()
-    
-    desfechos_finais = {
-        '1. Pedido Inicial (MPU)': total_pedidos,
-        '2. MPU Concedida': total_concedidas,
-        '3. Desfecho: Condenação': contagem_desfechos.get('Condenação', 0),
-        '4. Desfecho: Absolvição/Arquivamento': contagem_desfechos.get('Absolvição', 0) + contagem_desfechos.get('Arquivamento/Extinção', 0)
+    params = {
+        'ano': ano,
+        'codTipo': cod_tipo,
+        'ordenarPor': 'id', 
+        'itens': 100, 
     }
     
-    df_funil = pd.DataFrame(list(desfechos_finais.items()), columns=['Etapa', 'Volume'])
+    if id_situacao is not None:
+        params['idSituacao'] = id_situacao
+        
+    if id_autor is not None:
+        params['idAutor'] = id_autor
     
-    fig = px.funnel(
-        df_funil, 
-        x='Volume', 
-        y='Etapa',
-        title='Funil de Conversão: Do Pedido de Proteção ao Desfecho Principal'
+    total_proposicoes = 0
+    pagina = 1
+    
+    # st.info(f"Buscando: Ano={ano}, Tipo={cod_tipo}, Situação={id_situacao}, Autor={id_autor}") # Debug
+    
+    # Paginação: a API retorna no máximo 100 itens por página
+    while True:
+        try:
+            response = requests.get(URL_BASE_PROPOSICOES, params={**params, 'pagina': pagina})
+            response.raise_for_status() 
+            dados = response.json().get('dados', [])
+            total_proposicoes += len(dados)
+            
+            if len(dados) < params['itens']:
+                break
+            
+            pagina += 1
+            time.sleep(0.1) # Pausa mínima para respeitar limite da API
+            
+        except requests.exceptions.RequestException as e:
+            # st.error(f"Erro ao acessar API (contagem): {e}") # Oculta erros da API para o usuário
+            return 0
+            
+    return total_proposicoes
+
+@st.cache_data(ttl=3600)
+def buscar_id_deputado(nome):
+    """Busca o ID do deputado pelo nome."""
+    nome_formatado = quote(nome.strip()) # Codifica nome para URL
+    
+    params = {
+        'nome': nome_formatado,
+        'ordem': 'ASC',
+        'ordenarPor': 'nome',
+        'itens': 10, # Limita para eficiência
+    }
+    
+    try:
+        response = requests.get(URL_BASE_DEPUTADOS, params=params)
+        response.raise_for_status()
+        dados = response.json().get('dados', [])
+        
+        if dados:
+            # Retorna o ID do primeiro deputado encontrado (assumindo o mais relevante)
+            return dados[0]['id']
+        return None
+        
+    except requests.exceptions.RequestException:
+        return None
+
+# --- 3. FUNÇÕES DE PROCESSAMENTO E GRÁFICOS ---
+
+def processar_dados_globais(ano):
+    """Busca os totais reais de PLs e PECs na API e calcula as taxas de sucesso."""
+    
+    # Busca 1: Total Apresentado
+    total_pl_apres = contar_proposicoes_reais(ano, CODIGO_PL, SITUACAO_TODAS)
+    total_pec_apres = contar_proposicoes_reais(ano, CODIGO_PEC, SITUACAO_TODAS)
+    
+    # Busca 2: Total Aprovado
+    total_pl_aprov = contar_proposicoes_reais(ano, CODIGO_PL, SITUACAO_APROVADA)
+    total_pec_aprov = contar_proposicoes_reais(ano, CODIGO_PEC, SITUACAO_APROVADA)
+    
+    # Cria o DataFrame para os gráficos
+    data_sucesso = {
+        'Tipo': ['PL', 'PEC'],
+        'Apresentadas': [total_pl_apres, total_pec_apres],
+        'Aprovadas': [total_pl_aprov, total_pec_aprov],
+        'Taxa_Sucesso': [
+            (total_pl_aprov / total_pl_apres) * 100 if total_pl_apres > 0 else 0,
+            (total_pec_aprov / total_pec_apres) * 100 if total_pec_apres > 0 else 0,
+        ]
+    }
+    
+    return pd.DataFrame(data_sucesso)
+
+def criar_grafico_taxa_sucesso(df_dados, ano):
+    """Gráfico 1: Taxa de Sucesso (Aprovadas / Apresentadas) por tipo de Proposição."""
+    fig = px.bar(
+        df_dados,
+        x='Tipo',
+        y='Taxa_Sucesso',
+        color='Tipo',
+        title=f'1. Taxa de Sucesso (Aprovação Final) das Proposições ({ano})',
+        labels={'Taxa_Sucesso': 'Taxa de Aprovação (%)', 'Tipo': 'Tipo de Proposição'}
     )
-    fig.update_layout(yaxis_title="Etapas do Processo", xaxis_title="Volume de Casos")
+    fig.update_yaxes(range=[0, 100])
     return fig
 
+def criar_grafico_desempenho_deputado(df_deputado, nome, ano):
+    """Gráfico 3: Desempenho individual do Deputado."""
+    fig = px.bar(
+        df_deputado,
+        x='Situação',
+        y='Total',
+        color='Situação',
+        title=f'Desempenho Legislativo de {nome} ({ano})',
+        labels={'Total': 'Total de Projetos (PLs e PECs)', 'Situação': 'Situação do Projeto'}
+    )
+    return fig
 
-# --- 3. INTERFACE STREAMLIT ---
+# --- 4. INTERFACE STREAMLIT PRINCIPAL ---
 
-# Carrega os dados uma única vez
-df_dados = carregar_dados_simulados()
+st.set_page_config(layout="wide", page_title="Analisador de Jurimetria")
 
-st.set_page_config(layout="wide")
-
-st.title("🛡️ Analisador Jurimétrico de Medidas Protetivas")
-st.header(f"Tribunal de Justiça do Rio de Janeiro ({NOME_TRIBUNAL})")
-
-st.markdown("---")
+st.title("⚖️ Jurimetria: Análise da Produção Legislativa")
+st.header("Dados Reais da API da Câmara dos Deputados")
 
 # --- SELETOR DE ANO ---
-st.subheader("Selecione o Ano para Análise Detalhada:")
-
-anos_disponiveis = sorted(df_dados['ano'].unique(), reverse=True)
+st.subheader("Período de Análise:")
+anos_disponiveis = [ANO_ATUAL, 2023] 
+if ANO_ATUAL >= 2025:
+    anos_disponiveis.insert(0, ANO_ATUAL) 
 
 ano_selecionado = st.radio(
-    "Escolha o período para focar a análise:",
+    "Escolha o ano base para todos os gráficos:",
     anos_disponiveis,
-    index=0, 
+    index=anos_disponiveis.index(2023) if 2023 in anos_disponiveis else 0, # Padrão para 2023 se disponível
     horizontal=True
 )
 
-df_ano_selecionado = df_dados[df_dados['ano'] == ano_selecionado]
+st.markdown("---")
+
+# --- BLOCO 1: ANÁLISE GERAL (PL vs PEC) ---
+
+st.subheader(f"📊 Análise Global: Produtividade por Tipo ({ano_selecionado})")
+
+df_analise_global = processar_dados_globais(ano_selecionado)
+
+if df_analise_global['Apresentadas'].sum() == 0:
+    st.warning(f"Não foram encontrados dados de PLs e PECs para o ano de {ano_selecionado}.")
+else:
+    # KPIs
+    total_apresentado = df_analise_global['Apresentadas'].sum()
+    total_aprovado = df_analise_global['Aprovadas'].sum()
+    taxa_global = (total_aprovado / total_apresentado) * 100 if total_apresentado > 0 else 0
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric(label="Total de Proposições Analisadas", value=f"{total_apresentado:,}".replace(",", "."))
+    col2.metric(label="Aprovadas (Transformadas em Norma)", value=f"{total_aprovado:,}".replace(",", "."))
+    col3.metric(label="Taxa de Sucesso Global", value=f"{taxa_global:.2f}%")
+    
+    # Gráfico 1: Taxa de Sucesso
+    fig1 = criar_grafico_taxa_sucesso(df_analise_global, ano_selecionado)
+    st.plotly_chart(fig1, use_container_width=True)
 
 st.markdown("---")
 
-# Título do Relatório (dinâmico)
-st.subheader(f"Relatório Detalhado de Efetividade da Lei Maria da Penha (Ano {ano_selecionado})")
+# --- BLOCO 2: ANÁLISE INDIVIDUAL POR DEPUTADO (NOVA FUNÇÃO) ---
 
+st.subheader(f"👤 Análise Individual: Desempenho do Parlamentar ({ano_selecionado})")
+st.caption("Pesquise o nome completo ou parte do nome de um Deputado para ver sua produtividade no ano selecionado.")
 
-# --- MÉTRICAS CHAVE (KPIs) ---
-total_pedidas = len(df_ano_selecionado)
-total_proferidas = len(df_ano_selecionado[df_ano_selecionado['desfecho'] == 'Proferida (Concedida)'])
-taxa_atendimento = (total_proferidas / total_pedidas) * 100 if total_pedidas > 0 else 0
+nome_deputado = st.text_input("Nome do Deputado:", placeholder="Ex: Nikolas Ferreira, Gleisi Hoffmann, etc.")
+botao_buscar = st.button("Buscar Desempenho")
 
-col1, col2, col3 = st.columns(3)
+if botao_buscar and nome_deputado:
+    
+    with st.spinner(f"Buscando ID e projetos de {nome_deputado}..."):
+        
+        # 1. BUSCA ID
+        id_deputado = buscar_id_deputado(nome_deputado)
+        
+        if id_deputado is None:
+            st.error(f"Deputado(a) '{nome_deputado}' não encontrado(a) na base de dados da Câmara.")
+        else:
+            # 2. BUSCA TOTAL APRESENTADO (PL + PEC)
+            # A função de contagem agora aceita o ID do autor
+            total_apresentado = (
+                contar_proposicoes_reais(ano_selecionado, CODIGO_PL, SITUACAO_TODAS, id_deputado) +
+                contar_proposicoes_reais(ano_selecionado, CODIGO_PEC, SITUACAO_TODAS, id_deputado)
+            )
 
-with col1:
-    st.metric(label="Total de MPUs Solicitadas", value=f"{total_pedidas:,}".replace(",", "."))
+            # 3. BUSCA TOTAL APROVADO (PL + PEC)
+            total_aprovado = (
+                contar_proposicoes_reais(ano_selecionado, CODIGO_PL, SITUACAO_APROVADA, id_deputado) +
+                contar_proposicoes_reais(ano_selecionado, CODIGO_PEC, SITUACAO_APROVADA, id_deputado)
+            )
+            
+            # 4. CÁLCULO
+            taxa_aprovacao = (total_aprovado / total_apresentado) * 100 if total_apresentado > 0 else 0
+            
+            # 5. EXIBIÇÃO
+            st.success(f"Desempenho de **{nome_deputado}** (ID: {id_deputado}) em {ano_selecionado} obtido com sucesso:")
+            
+            col_a, col_b, col_c = st.columns(3)
+            col_a.metric("Projetos Apresentados", f"{total_apresentado:,}".replace(",", "."))
+            col_b.metric("Projetos Aprovados", f"{total_aprovado:,}".replace(",", "."))
+            col_c.metric("Taxa de Aprovação Individual", f"{taxa_aprovacao:.2f}%")
 
-with col2:
-    st.metric(label="MPUs Concedidas (Proferidas)", value=f"{total_proferidas:,}".replace(",", "."))
-
-with col3:
-    st.metric(label="Taxa de Atendimento (%)", value=f"{taxa_atendimento:.2f}%")
-
-st.markdown("---")
-
-# --- GRÁFICOS PRINCIPAIS ---
-
-# Gráfico 1 (Mensal) - Corresponde ao antigo Gráfico 4
-st.subheader(f"1. Evolução Mensal de Pedidos e Resultados ({ano_selecionado})")
-st.caption("Nota: Os meses de Novembro e Dezembro de 2025 estão zerados, pois os dados ainda não estão disponíveis.")
-fig4 = criar_grafico_4_mensal(df_dados, ano_selecionado)
-st.plotly_chart(fig4, use_container_width=True)
-
-st.markdown("---")
-
-# Gráfico 2 (Tempo de Expedição)
-st.subheader(f"2. Distribuição do Tempo de Expedição em Horas ({ano_selecionado})")
-fig2 = criar_grafico_2_tempo_segmentado(df_ano_selecionado) 
-st.plotly_chart(fig2, use_container_width=True)
-
-st.markdown("---")
-
-# Gráfico 3 (Proporção dos Tipos)
-st.subheader(f"3. Proporção dos Tipos de Medidas Protetivas Concedidas ({ano_selecionado})")
-fig3 = criar_grafico_3_tipos_mpu(df_ano_selecionado)
-st.plotly_chart(fig3, use_container_width=True)
-
-st.markdown("---")
-
-# Gráfico 4 (Funil de Conversão) - Corresponde ao novo Gráfico 5
-st.subheader(f"4. Funil de Efetividade e Desfecho Final ({ano_selecionado})")
-st.caption("Taxa de Conversão: Do Pedido de Proteção à Sentença na Ação Principal (Simulação)")
-fig_funil = criar_grafico_funil_desfecho(df_ano_selecionado)
-st.plotly_chart(fig_funil, use_container_width=True)
-
-# Tabela Interativa de Detalhamento
-st.markdown("##### Detalhamento Amostral dos Dados de Processos (Tabela Interativa):")
-st.caption("Use esta tabela para filtrar e ordenar dados brutos, simulando o acesso aos metadados processuais.")
-
-df_tabela = df_ano_selecionado[['data_ajuizamento', 'data_decisao_mpu', 'tipo_mpu_expedida', 'tempo_tramitacao_horas', 'desfecho_final']].copy()
-df_tabela.columns = ['Data Ajuizamento', 'Data Decisão MPU', 'Tipo MPU', 'Tempo (h)', 'Desfecho Final']
-
-st.dataframe(
-    df_tabela,
-    use_container_width=True,
-    height=300 
-)
+            # 6. GRÁFICO INDIVIDUAL
+            df_deputado_plot = pd.DataFrame({
+                'Situação': ['Apresentados', 'Aprovados'],
+                'Total': [total_apresentado, total_aprovado]
+            })
+            
+            if total_apresentado > 0:
+                fig3 = criar_grafico_desempenho_deputado(df_deputado_plot, nome_deputado, ano_selecionado)
+                st.plotly_chart(fig3, use_container_width=True)
+            else:
+                st.info("O deputado não apresentou projetos (PL ou PEC) no ano selecionado que foram contabilizados pela API.")

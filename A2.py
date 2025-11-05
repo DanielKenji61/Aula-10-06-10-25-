@@ -8,17 +8,13 @@ from dateutil.relativedelta import relativedelta
 
 # --- 1. CONFIGURAÇÃO E VARIÁVEIS GLOBAIS ---
 
-# Endpoint da API REST v2 da Câmara dos Deputados
 URL_API_PROPOSICOES_V2 = "https://dadosabertos.camara.leg.br/api/v2/proposicoes"
-
-# Código ÚNICO para Proposta de Emenda à Constituição (PEC)
 CODIGO_PEC = 304     
 
-# Códigos de Situação (Usados para o Gráfico de Pizza)
-SITUACAO_APROVADA = 300  # Transf. em Norma Jurídica / Aprovada nas 2 Casas
-SITUACAO_ARQUIVADA = 239 # Arquivada
+# CÓDIGOS DE SITUAÇÃO CORRIGIDOS PARA ANÁLISE REALISTA
+SITUACAO_APROVADA_FINAL = 300 # Usaremos para o KPI de sucesso, mas não no gráfico de pizza
+SITUACAO_ARQUIVADA = 239 # Insucesso claro
 
-# O ano e mês atual
 ANO_ATUAL_REAL = date.today().year
 MES_ATUAL = date.today().month
 
@@ -33,7 +29,6 @@ def limpar_cache_api():
 def contar_pecs_por_situacao(ano, id_situacao=None):
     """
     Busca o total de PECs com uma situação final específica (Aprovadas, Arquivadas, ou Total Apresentado).
-    Esta função é mais eficiente porque não busca todos os meses.
     """
     
     data_inicio = f'{ano}-01-01'
@@ -173,10 +168,12 @@ with st.spinner(f'Buscando dados mensais reais da API para PECs de {ano_selecion
 
 if df_pec_mensal.empty or df_pec_mensal['Total'].sum() == 0:
     st.error(f"Não há registros de PECs para {ano_selecionado} na base de dados da API ou houve falha na conexão.")
-    st.stop() # Interrompe a execução se não houver dados
+    st.stop() 
 
 total_pec_anual = df_pec_mensal['Total'].sum()
+total_aprovado_final = contar_pecs_por_situacao(ano_selecionado, SITUACAO_APROVADA_FINAL) # Para KPI
 
+# --- GRÁFICO 1: PECs (Emendas Constitucionais) ---
 st.subheader(f"1. Volume Mensal de Emendas à Constituição (PECs) em {ano_selecionado}")
 st.caption("Gráfico de Barras: Número de Propostas de Emenda à Constituição (PECs) apresentadas por mês.")
 
@@ -196,37 +193,41 @@ fig_pec_mensal.update_layout(
 )
 st.plotly_chart(fig_pec_mensal, use_container_width=True)
 
-st.metric(f"Total Acumulado de PECs em {ano_selecionado}:", f"{total_pec_anual:,}".replace(",", "."))
+# Métricas
+col1, col2 = st.columns(2)
+col1.metric(f"Total Apresentado em {ano_selecionado}:", f"{total_pec_anual:,}".replace(",", "."))
+col2.metric(f"Total Aprovado Final (KPI):", f"{total_aprovado_final:,}".replace(",", "."), delta_color="normal")
+
 
 st.markdown("---")
 
 # =========================================================================
-# SEÇÃO 2: GRÁFICO DE PIZZA (Sucesso vs. Insucesso)
+# SEÇÃO 2: GRÁFICO DE PIZZA (Sucesso vs. Insucesso - REALISTA)
 # =========================================================================
 
-st.subheader(f"2. Taxa de Sucesso: PECs Aprovadas vs. Não Aprovadas em {ano_selecionado}")
-st.caption("Análise de efetividade jurídica: Aprovadas (Transf. em Norma) ou Arquivadas/Outras Situações.")
+st.subheader(f"2. Situação de Tramitação das PECs em {ano_selecionado}")
+st.caption("Análise de efetividade jurídica: Compara as PECs que foram arquivadas com as que ainda estão em tramitação.")
 
 # 1. BUSCA DE DADOS REAIS PARA A PIZZA
-with st.spinner("Buscando dados de aprovação e arquivamento..."):
+with st.spinner("Buscando dados de situação (Arquivamento e Aprovação Final)..."):
     # Total Aprovado (Sucesso)
-    total_aprovado = contar_pecs_por_situacao(ano_selecionado, SITUACAO_APROVADA)
+    total_aprovado = contar_pecs_por_situacao(ano_selecionado, SITUACAO_APROVADA_FINAL)
     
     # Total Arquivado
     total_arquivado = contar_pecs_por_situacao(ano_selecionado, SITUACAO_ARQUIVADA)
 
-# 2. CALCULA O QUE ESTÁ 'EM ABERTO/TRAMITAÇÃO'
-# PECs em Tramitação/Outras Situações = Total Apresentado - Aprovadas - Arquivadas
-total_em_aberto = total_pec_anual - total_aprovado - total_arquivado
+# 2. CALCULA O QUE ESTÁ 'EM TRAMITAÇÃO/OUTRAS'
+# Isso representa o vasto campo de insucesso/sucesso potencial
+total_tramitacao = total_pec_anual - total_aprovado - total_arquivado
 
-# Garante que não há número negativo
-if total_em_aberto < 0:
-    total_em_aberto = 0
+# Garante que o número não seja negativo (em caso de erro na API)
+if total_tramitacao < 0:
+    total_tramitacao = 0
 
 # 3. CRIA O DATAFRAME PARA O GRÁFICO DE PIZZA
 df_situacao = pd.DataFrame({
-    'Situação': ['Aprovada (Sucesso)', 'Arquivada/Rejeitada', 'Em Tramitação/Outras'],
-    'Total': [total_aprovado, total_arquivado, total_em_aberto]
+    'Situação': ['Arquivada/Rejeitada', 'Aprovada (Sucesso Final)', 'Em Tramitação/Em Análise'],
+    'Total': [total_arquivado, total_aprovado, total_tramitacao]
 })
 
 # Remove linhas com zero para não poluir o gráfico
@@ -240,12 +241,12 @@ else:
         df_situacao,
         values='Total',
         names='Situação',
-        title=f'Situação Final das PECs Apresentadas em {ano_selecionado}',
+        title=f'Situação Atual das PECs Apresentadas em {ano_selecionado}',
         hole=.5,
         color_discrete_map={
-            'Aprovada (Sucesso)': 'green',
+            'Aprovada (Sucesso Final)': 'green',
             'Arquivada/Rejeitada': 'darkred',
-            'Em Tramitação/Outras': 'gray'
+            'Em Tramitação/Em Análise': 'orange'
         }
     )
     st.plotly_chart(fig_pizza_situacao, use_container_width=True)

@@ -22,24 +22,28 @@ SITUACAO_TODAS = None
 
 # --- 2. FUNÇÕES DE BUSCA DA API (DADOS REAIS E ROBUSTOS) ---
 
-# Adicionamos um botão de reset para limpar o cache quando necessário (resolve o problema dos 313 fixos)
 def limpar_cache_api():
+    """Limpa o cache do Streamlit."""
     st.cache_data.clear()
     st.rerun()
 
 @st.cache_data(ttl=3600) # Cache de 1 hora
-def contar_proposicoes_reais(ano, cod_tipo, id_situacao=None, id_autor=None):
+def contar_proposicoes_reais(ano, cod_tipo, id_situacao=None, id_autor=None, data_inicio_fixa=None, data_fim_fixa=None):
     """
     Faz a chamada real à API da Câmara para contar proposições.
+    Aceita datas fixas para consultas específicas.
     """
     
-    # Usamos o primeiro dia do ano para a data inicial
-    data_inicio = f'{ano}-01-01'
-    
-    # A data final é crucial: se for o ano atual (2025), o filtro deve ir até o mês atual
-    data_fim = f'{ano}-12-31'
-    if ano == date.today().year:
-         data_fim = f'{date.today().year}-{date.today().month:02d}-{date.today().day:02d}'
+    # 1. Determine a Faixa de Data
+    if data_inicio_fixa and data_fim_fixa:
+        data_inicio = data_inicio_fixa
+        data_fim = data_fim_fixa
+    else:
+        # Lógica original: início do ano até o fim do ano ou o dia atual (se for o ano atual)
+        data_inicio = f'{ano}-01-01'
+        data_fim = f'{ano}-12-31'
+        if ano == date.today().year:
+             data_fim = f'{date.today().year}-{date.today().month:02d}-{date.today().day:02d}'
     
     params = {
         'dataInicio': data_inicio,
@@ -66,6 +70,7 @@ def contar_proposicoes_reais(ano, cod_tipo, id_situacao=None, id_autor=None):
             dados = response.json().get('dados', [])
             total_proposicoes += len(dados)
             
+            # Se a página for menor que o número máximo de itens, paramos
             if len(dados) < params['itens']:
                 break
             
@@ -105,7 +110,7 @@ def buscar_id_deputado(nome):
 # --- 3. FUNÇÕES DE PROCESSAMENTO E GRÁFICOS ---
 
 def processar_dados_globais(ano):
-    """Busca os totais reais de PLs e PECs na API e calcula as taxas de sucesso."""
+    """Busca os totais reais de PLs e PECs na API e calcula as taxas de sucesso para o ano completo/até a data atual."""
     
     # Busca 1: Total Apresentado (usando SITUACAO_TODAS para ter o número máximo)
     total_pl_apres = contar_proposicoes_reais(ano, CODIGO_PL, SITUACAO_TODAS)
@@ -173,14 +178,72 @@ with st.sidebar:
 
 st.markdown("---")
 
-# --- SELETOR DE ANO ---
-st.subheader("Período de Análise:")
+# --- NOVO BLOCO: ANÁLISE ESPECÍFICA SOLICITADA (Jan-Out/2025) ---
+
+st.subheader("🎯 Jurimetria Específica: PLs Propostos e Aprovados (Jan a Out/2025)")
+
+# Variáveis fixas para a análise solicitada
+ANO_ALVO = 2025
+DATA_INICIO_ALVO = f'{ANO_ALVO}-01-01'
+DATA_FIM_ALVO = f'{ANO_ALVO}-10-31' # Fim de Outubro
+
+with st.spinner("Realizando análise específica (Janeiro a Outubro de 2025)..."):
+    
+    # 1. Total de PLs Propostos (Situação TODAS)
+    total_pl_proposto = contar_proposicoes_reais(
+        ANO_ALVO, 
+        CODIGO_PL, 
+        SITUACAO_TODAS, 
+        data_inicio_fixa=DATA_INICIO_ALVO, 
+        data_fim_fixa=DATA_FIM_ALVO
+    )
+
+    # 2. Total de PLs Aprovados (Situação APROVADA)
+    total_pl_aprovado = contar_proposicoes_reais(
+        ANO_ALVO, 
+        CODIGO_PL, 
+        SITUACAO_APROVADA, 
+        data_inicio_fixa=DATA_INICIO_ALVO, 
+        data_fim_fixa=DATA_FIM_ALVO
+    )
+    
+    taxa_sucesso = (total_pl_aprovado / total_pl_proposto) * 100 if total_pl_proposto > 0 else 0
+
+    col_prop, col_aprov, col_taxa = st.columns(3)
+
+    col_prop.metric("PLs Propostos (Jan-Out/2025)", f"{total_pl_proposto:,}".replace(",", "."))
+    col_aprov.metric("PLs Aprovados (Jan-Out/2025)", f"{total_pl_aprovado:,}".replace(",", "."))
+    col_taxa.metric("Taxa de Aprovação no Período", f"{taxa_sucesso:.2f}%")
+
+    # Gráfico simples de comparação
+    if total_pl_proposto > 0:
+        df_especifico = pd.DataFrame({
+            'Situação': ['Propostos (Jan-Out)', 'Aprovados (Jan-Out)'],
+            'Total': [total_pl_proposto, total_pl_aprovado]
+        })
+        
+        fig_especifico = px.bar(
+            df_especifico,
+            x='Situação',
+            y='Total',
+            color='Situação',
+            title='Comparativo: Propostos vs. Aprovados (PLs em 2025)',
+            labels={'Total': 'Total de Projetos de Lei', 'Situação': 'Situação'}
+        )
+        st.plotly_chart(fig_especifico, use_container_width=True)
+    else:
+        st.info("Nenhum Projeto de Lei (PL) foi encontrado no período de Janeiro a Outubro de 2025, de acordo com a API, ou a API está inoperante.")
+
+st.markdown("---")
+
+# --- SELETOR DE ANO (ANÁLISE ANUAL) ---
+st.subheader("Período de Análise Anual (2024 e 2023):")
 
 # Usamos a lista fixa de anos desejada
 anos_disponiveis = ANOS_DESEJADOS
 
 ano_selecionado = st.radio(
-    "Escolha o ano base para todos os gráficos:",
+    "Escolha o ano base para os gráficos anuais (Global e Deputado):",
     anos_disponiveis,
     index=anos_disponiveis.index(2024), 
     horizontal=True
@@ -222,7 +285,7 @@ st.subheader(f"👤 Análise Individual: Desempenho do Parlamentar ({ano_selecio
 st.caption("Pesquise o nome completo ou parte do nome de um Deputado para ver sua produtividade no ano selecionado.")
 
 nome_deputado = st.text_input("Nome do Deputado:", placeholder="Ex: Nikolas Ferreira, Gleisi Hoffmann, etc.")
-botao_buscar = st.button("Buscar Desempenho")
+botao_buscar = st.button("Buscar Desempenho", key="btn_buscar_deputado")
 
 if botao_buscar and nome_deputado:
     

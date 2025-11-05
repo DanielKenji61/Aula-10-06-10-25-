@@ -15,7 +15,7 @@ URL_API_PROPOSICOES_V2 = "https://dadosabertos.camara.leg.br/api/v2/proposicoes"
 CODIGO_PL = 207      # Projeto de Lei (PL)
 CODIGO_PEC = 304     # Proposta de Emenda à Constituição (PEC)
 
-# O ano atual é 2025
+# O ano atual (para limitar a busca do ano corrente)
 ANO_ATUAL_REAL = date.today().year
 MES_ATUAL = date.today().month
 
@@ -33,20 +33,19 @@ def buscar_proposicoes_mensais_por_tipo(ano, cod_tipo, nome_tipo):
     """
     dados_mensais = []
     
-    # Se for o ano atual (2025), limitamos a busca até o mês atual (Novembro)
+    # Define o limite final da busca.
     if ano == ANO_ATUAL_REAL:
-        # Note: Hoje é Novembro/2025, então a busca vai até 10 (Outubro completo) + 1 (Novembro, que está em andamento)
+        # Se for o ano atual, limitamos a busca até o mês atual.
         mes_limite = MES_ATUAL 
     else:
         mes_limite = 12
 
-    # Itera sobre os meses de Janeiro (1) até o mês limite
     for mes in range(1, mes_limite + 1):
         
         # Define as datas de início e fim do mês
         data_inicio = date(ano, mes, 1)
         
-        # Calcula o último dia do mês (garantindo que não vá além da data de hoje)
+        # Calcula o último dia do mês
         if mes == MES_ATUAL and ano == ANO_ATUAL_REAL:
              data_fim = date.today()
         elif mes == 12:
@@ -59,7 +58,7 @@ def buscar_proposicoes_mensais_por_tipo(ano, cod_tipo, nome_tipo):
             'dataFim': data_fim.strftime('%Y-%m-%d'),
             'codTipo': cod_tipo,
             'ordenarPor': 'id',
-            'itens': 100, # Número de itens por página
+            'itens': 100, 
         }
         
         total_no_mes = 0
@@ -73,7 +72,6 @@ def buscar_proposicoes_mensais_por_tipo(ano, cod_tipo, nome_tipo):
                 dados = response.json().get('dados', [])
                 total_no_mes += len(dados)
                 
-                # Se a página não estiver completa, é a última página
                 if len(dados) < params['itens']:
                     break
                 
@@ -81,12 +79,11 @@ def buscar_proposicoes_mensais_por_tipo(ano, cod_tipo, nome_tipo):
                 time.sleep(0.05) 
                 
             except requests.exceptions.RequestException:
-                # Retorna dados parciais em caso de falha na API
                 break 
                 
         # Adiciona o resultado
         dados_mensais.append({
-            'Mês': date(2000, mes, 1).strftime('%b/%Y' if ano != 2024 else '%b'), # Exibe o nome do mês
+            'Mês': date(2000, mes, 1).strftime('%b/%Y' if ano != 2024 else '%b'), 
             'Ordem_Mes': mes,
             'Total': total_no_mes,
             'Tipo': nome_tipo
@@ -118,7 +115,7 @@ anos_disponiveis = [2024, 2023]
 ano_selecionado = st.radio(
     "Escolha o ano base para visualizar as informações:",
     anos_disponiveis,
-    index=0, # 2024 é o padrão
+    index=0, 
     format_func=lambda x: f"Ano {x}", 
     horizontal=True
 )
@@ -128,56 +125,67 @@ st.markdown("---")
 # --- BUSCA E PROCESSAMENTO DE DADOS ---
 
 with st.spinner(f'Buscando dados reais da API da Câmara para {ano_selecionado}...'):
-    # Busca dados de PL
-    df_pl = buscar_proposicoes_mensais_por_tipo(ano_selecionado, CODIGO_PL, 'Projeto de Lei (PL)')
-    
-    # Busca dados de PEC
+    # GRÁFICO 1 (PECS): Busca dados de PEC (Emenda à Constituição)
     df_pec = buscar_proposicoes_mensais_por_tipo(ano_selecionado, CODIGO_PEC, 'Emenda à Constituição (PEC)')
+    
+    # GRÁFICO 2 (PLs): Busca dados de PL (Projeto de Lei)
+    df_pl_proposto = buscar_proposicoes_mensais_por_tipo(ano_selecionado, CODIGO_PL, 'Projeto de Lei (PL) Proposto')
 
-# Combina os DataFrames
-df_combinado = pd.concat([df_pl, df_pec]).reset_index(drop=True)
 
+# --- EXIBIÇÃO DE GRÁFICOS E DADOS ---
 
-if df_combinado.empty or df_combinado['Total'].sum() == 0:
-    st.error(f"Não foi possível carregar dados da API para o ano de {ano_selecionado}.")
+# --- GRÁFICO 1: PECs (Emendas Constitucionais) ---
+st.subheader(f"1. Volume Mensal de Emendas à Constituição (PECs) em {ano_selecionado}")
+st.caption("Análise da produção de Propostas de Emenda à Constituição (PECs) por mês.")
+
+if df_pec.empty or df_pec['Total'].sum() == 0:
+    st.info(f"Não há registros de Emendas à Constituição (PECs) para {ano_selecionado} na base de dados da API.")
 else:
-    # Garante que a ordem dos meses está correta para o gráfico
-    df_combinado = df_combinado.sort_values(by='Ordem_Mes')
-
-    # --- GRÁFICO 1: VOLUME MENSAL (PL vs PEC) ---
-    st.subheader(f"1. Volume Mensal de Proposições Apresentadas em {ano_selecionado}")
-    st.caption("Gráfico de Barras Agrupadas: Comparação entre a produção de Leis Ordinárias (PL) e Emendas Constitucionais (PEC).")
-
-    fig_mensal = px.bar(
-        df_combinado,
+    df_pec = df_pec.sort_values(by='Ordem_Mes')
+    
+    # Gráfico simples, apenas com as PECs (COR VERMELHA FIXA)
+    fig_pec = px.bar(
+        df_pec,
         x='Mês',
         y='Total',
-        color='Tipo',
-        barmode='group', # ESSA LINHA GARANTE QUE ELES ESTÃO LADO A LADO
-        title=f'Proposições (PL e PEC) Apresentadas Mês a Mês em {ano_selecionado}',
-        labels={'Total': 'Número de Proposições', 'Mês': 'Mês de Apresentação'},
-        color_discrete_map={
-            'Projeto de Lei (PL)': 'blue',
-            'Emenda à Constituição (PEC)': 'red'
-        }
+        color_discrete_sequence=['red'], 
+        title=f'PECs Apresentadas Mês a Mês em {ano_selecionado}',
+        labels={'Total': 'Número de PECs', 'Mês': 'Mês de Apresentação'},
     )
-    
-    # Ajusta o layout para melhor visualização
-    fig_mensal.update_layout(xaxis={'categoryorder': 'array', 'categoryarray': df_combinado['Mês'].unique()})
-    
-    st.plotly_chart(fig_mensal, use_container_width=True)
+    fig_pec.update_layout(xaxis={'categoryorder': 'array', 'categoryarray': df_pec['Mês'].unique()})
+    st.plotly_chart(fig_pec, use_container_width=True)
 
-    # --- MÉTRICAS CHAVE (KPIs) ---
-    total_pl_anual = df_pl['Total'].sum()
+    # Métricas PEC
     total_pec_anual = df_pec['Total'].sum()
+    st.markdown(f"**Total Acumulado de PECs em {ano_selecionado}:** {total_pec_anual:,}".replace(",", "."))
 
-    st.markdown("#### Totais Acumulados no Ano:")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("PLs Apresentadas", f"{total_pl_anual:,}".replace(",", "."))
-    col2.metric("PECs Apresentadas", f"{total_pec_anual:,}".replace(",", "."))
-    col3.metric("Total Geral", f"{total_pl_anual + total_pec_anual:,}".replace(",", "."))
+st.markdown("---")
 
-    st.markdown("---")
+# --- GRÁFICO 2: PLs (Projetos de Lei Propostos) ---
+st.subheader(f"2. Volume Mensal de Projetos de Lei (PL) Propostos em {ano_selecionado}")
+st.caption("Este gráfico mostra todos os Projetos de Lei Ordinária (PL) que foram propostos na Câmara no ano.")
 
-    st.markdown("### Próximos Passos:")
-    st.markdown("O primeiro bloco está pronto! Podemos adicionar a próxima análise (Ex: Distribuição por Autores, Partidos ou Sucesso) logo abaixo deste ponto.")
+if df_pl_proposto.empty or df_pl_proposto['Total'].sum() == 0:
+    st.info(f"Não há registros de Projetos de Lei (PLs) propostos para {ano_selecionado} na base de dados da API.")
+else:
+    df_pl_proposto = df_pl_proposto.sort_values(by='Ordem_Mes')
+
+    # Gráfico simples, apenas com os PLs (COR AZUL FIXA)
+    fig_pl = px.bar(
+        df_pl_proposto,
+        x='Mês',
+        y='Total',
+        color_discrete_sequence=['blue'],
+        title=f'PLs Propostos Mês a Mês em {ano_selecionado}',
+        labels={'Total': 'Número de PLs', 'Mês': 'Mês de Apresentação'},
+    )
+    fig_pl.update_layout(xaxis={'categoryorder': 'array', 'categoryarray': df_pl_proposto['Mês'].unique()})
+    st.plotly_chart(fig_pl, use_container_width=True)
+
+    # Métricas PL
+    total_pl_anual = df_pl_proposto['Total'].sum()
+    st.markdown(f"**Total Acumulado de PLs Propostos em {ano_selecionado}:** {total_pl_anual:,}".replace(",", "."))
+
+st.markdown("---")
+st.markdown("### Próximos Passos na Análise do Fluxo Legislativo:")
+st.markdown("Agora que a separação PL/PEC está visualmente clara, podemos adicionar a próxima análise, focando na **autoria** ou no **andamento** das proposições (Ex: quem propõe mais?).")

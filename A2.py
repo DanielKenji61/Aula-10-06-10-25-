@@ -130,8 +130,8 @@ st.markdown("---")
 # SEÇÃO 2: GRÁFICO DE VOTAÇÃO POR PARTIDO (Título Alterado)
 # =========================================================
 
+# Título ajustado para apenas 'Total de votos em plenário'
 st.subheader("Total de votos em plenário")
-st.caption(f"Análise dos votos na votação {ID_VOTACAO} (Substitutivo em 1º Turno) agrupados por partido.")
 
 if df_votos_nominais.empty:
     st.error("ERRO: Não foi possível carregar a lista de votos nominais. A API da Câmara não retornou dados para /votos.")
@@ -163,4 +163,4 @@ else:
     st.plotly_chart(fig_votos, use_container_width=True)
 
 st.markdown("---")
-st.success("Análise de transparência finalizada.")
+st.success("Análise de transparência concluída.")

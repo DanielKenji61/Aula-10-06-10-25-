@@ -58,7 +58,7 @@ def obter_dados_juridicos():
     return "PEC 03/2021", EMENTA_FIXA, "ERRO DE DADOS/API INACESSÍVEL", "red"
 
 def processar_votos_nominais_tabela(dados_votos):
-    """Processa o JSON de votos nominais em um DataFrame para TABELA NOMINAL."""
+    """Processa o JSON de votos nominais em um DataFrame de votos brutos."""
     if not dados_votos or not dados_votos.get('dados'):
         return pd.DataFrame()
 
@@ -127,11 +127,11 @@ with col_status:
 st.markdown("---")
 
 # =========================================================
-# SEÇÃO 2: GRÁFICO DE VOTAÇÃO POR PARTIDO
+# SEÇÃO 2: GRÁFICO DE VOTAÇÃO POR PARTIDO (Título Alterado)
 # =========================================================
 
-st.subheader("2. Resultado da Votação Nominal por Partido")
-st.caption(f"Análise dos votos na votação {ID_VOTACAO} (Substitutivo em 1º Turno).")
+st.subheader("Total de votos em plenário")
+st.caption(f"Análise dos votos na votação {ID_VOTACAO} (Substitutivo em 1º Turno) agrupados por partido.")
 
 if df_votos_nominais.empty:
     st.error("ERRO: Não foi possível carregar a lista de votos nominais. A API da Câmara não retornou dados para /votos.")
@@ -139,11 +139,10 @@ else:
     # Agrupa votos para o gráfico de barras
     df_votos_agrupados = agrupar_votos_por_partido(df_votos_nominais.copy())
     
-    # CALCULA O TOTAL GERAL DE VOTOS REGISTRADOS
+    # CALCULA E EXIBE O TOTAL GERAL DE VOTOS REGISTRADOS
     total_votos_registrados = df_votos_agrupados['Total Votos'].sum()
 
-    # Exibe o KPI solicitado
-    st.metric("Total de Votos Registrados (Votação Nominal)", f"{total_votos_registrados:,}".replace(",", "."))
+    st.metric("Total de Votos Registrados na Votação Nominal", f"{total_votos_registrados:,}".replace(",", "."))
     
     st.markdown("---")
     

@@ -80,7 +80,6 @@ def processar_votos_nominais_tabela(dados_votos):
 def agrupar_votos_por_partido(df_votos):
     """Cria o DataFrame agrupado por partido para o gráfico de barras."""
     
-    # Mapear e contar os votos
     df_votos['Sim'] = df_votos['Voto Nominal'].apply(lambda x: 1 if x == 'Sim' else 0)
     df_votos['Não'] = df_votos['Voto Nominal'].apply(lambda x: 1 if x == 'Não' else 0)
     df_votos['Abstenção'] = df_votos['Voto Nominal'].apply(lambda x: 1 if x == 'Abstenção' else 0)
@@ -128,18 +127,27 @@ with col_status:
 st.markdown("---")
 
 # =========================================================
-# SEÇÃO 2: RELATÓRIO NOMINAL DE VOTAÇÃO
+# SEÇÃO 2: GRÁFICO DE VOTAÇÃO POR PARTIDO
 # =========================================================
 
-st.subheader("Votação Nominal Aberta (Registro de Cada Parlamentar)")
-st.caption(f"Dados obtidos para a votação {ID_VOTACAO} (Substitutivo em 1º Turno).")
+st.subheader("2. Resultado da Votação Nominal por Partido")
+st.caption(f"Análise dos votos na votação {ID_VOTACAO} (Substitutivo em 1º Turno).")
 
 if df_votos_nominais.empty:
     st.error("ERRO: Não foi possível carregar a lista de votos nominais. A API da Câmara não retornou dados para /votos.")
 else:
-    # 1. Gráfico de Barras por Partido (RESTITUIDO)
+    # Agrupa votos para o gráfico de barras
     df_votos_agrupados = agrupar_votos_por_partido(df_votos_nominais.copy())
     
+    # CALCULA O TOTAL GERAL DE VOTOS REGISTRADOS
+    total_votos_registrados = df_votos_agrupados['Total Votos'].sum()
+
+    # Exibe o KPI solicitado
+    st.metric("Total de Votos Registrados (Votação Nominal)", f"{total_votos_registrados:,}".replace(",", "."))
+    
+    st.markdown("---")
+    
+    # Gráfico de Barras por Partido
     df_votos_plot = df_votos_agrupados.drop(columns=['Total Votos', 'Outro'])
     df_plot_melt = df_votos_plot.melt(id_vars='Partido', var_name='Tipo de Voto', value_name='Total')
 
@@ -155,13 +163,5 @@ else:
     fig_votos.update_layout(xaxis_title="Partido", yaxis_title="Número Total de Votos")
     st.plotly_chart(fig_votos, use_container_width=True)
 
-    # 2. Tabela Nominal Interativa
-    st.markdown("##### Lista Nominal (Voto por Parlamentar):")
-    st.dataframe(
-        df_votos_nominais,
-        use_container_width=True,
-        hide_index=True,
-    )
-
 st.markdown("---")
-st.success("Análise de transparência concluída.")
+st.success("Análise de transparência finalizada.")

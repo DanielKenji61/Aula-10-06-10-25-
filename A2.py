@@ -30,16 +30,17 @@ def buscar_dados(url):
         return None
 
 @st.cache_data(ttl=3600)
-def obter_ementa_e_titulo():
+def obter_titulo():
+    """Busca apenas o título curto da PEC para o cabeçalho."""
     dados = buscar_dados(URL_PROPOSICAO_DETALHE)
-    if dados and dados.get('ementa'):
-        ementa = dados['ementa']
-        nome_curto = dados.get('siglaTipo', 'PEC') + ' ' + str(dados.get('numero', '03')) + '/' + str(dados.get('ano', '2021'))
-        return ementa, nome_curto
-    return "Ementa não disponível.", "PEC 03/2021"
+    if dados:
+        return dados.get('siglaTipo', 'PEC') + ' ' + str(dados.get('numero', '03')) + '/' + str(dados.get('ano', '2021'))
+    return "PEC 03/2021"
 
 def processar_orientacoes(dados_orientacoes):
+    """Processa o JSON de orientações para um DataFrame de visualização."""
     if not dados_orientacoes or not dados_orientacoes.get('dados'):
+        # Retorna DataFrame vazio se não houver dados, indicando 'Não Orientou'
         return pd.DataFrame()
         
     dados_processados = []
@@ -56,6 +57,7 @@ def processar_orientacoes(dados_orientacoes):
     return pd.DataFrame(dados_processados)
 
 def processar_votos_nominais(dados_votos):
+    """Processa o JSON de votos nominais em um DataFrame agrupado por Partido."""
     if not dados_votos or not dados_votos.get('dados'):
         return pd.DataFrame()
 
@@ -77,23 +79,16 @@ def processar_votos_nominais(dados_votos):
 
 st.set_page_config(layout="wide", page_title="Análise PEC 03/2021")
 
+titulo = obter_titulo()
 st.title("⚖️ Monitor de Transparência: PEC 03/2021 (Blindagem)")
-st.header("Análise Política e Jurimétrica de Votação Nominal")
+st.header(f"Análise Política e Jurimétrica de Votação Nominal - {titulo}")
 
-ementa, titulo = obter_ementa_e_titulo()
 dados_orientacoes_raw = buscar_dados(URL_ORIENTACOES)
 dados_votos_raw = buscar_dados(URL_VOTOS)
 
 st.sidebar.button("Resetar Cache da API", on_click=limpar_cache_api)
 st.markdown("---")
 
-st.subheader(f"📜 Conteúdo e Objetivo: {titulo}")
-
-st.markdown("### O que a PEC 03/2021 Propõe (Ementa):")
-st.markdown(f"> **{ementa}**")
-st.caption("A proposta visava alterar diversos artigos da Constituição Federal para estabelecer o Estatuto do Congressista e blindar as prerrogativas parlamentares.")
-
-st.markdown("---")
 
 st.subheader("1. Orientação das Lideranças Partidárias")
 st.caption("A posição oficial que os líderes determinaram à bancada para a votação do Substitutivo em 1º Turno.")
@@ -101,7 +96,7 @@ st.caption("A posição oficial que os líderes determinaram à bancada para a v
 df_orientacoes = processar_orientacoes(dados_orientacoes_raw)
 
 if df_orientacoes.empty:
-    st.warning("Não foi possível carregar as orientações das lideranças. O endpoint pode estar inacessível.")
+    st.info("A API não retornou orientações partidárias. Isso significa que a maioria das lideranças optou por 'Liberar a Bancada' ou 'Não Orientar' ativamente nesta votação específica.")
 else:
     cores_orientacao = {
         'Sim': 'green', 'Não': 'red', 'Obstrução': 'darkred', 
@@ -131,8 +126,8 @@ df_votos_partido = processar_votos_nominais(dados_votos_raw)
 if df_votos_partido.empty:
     st.error("Não foi possível carregar os votos nominais detalhados.")
 else:
+    # 1. Gráfico de Votos (Empilhadas)
     df_votos_plot = df_votos_partido.drop(columns=['Total Votos', 'Outro'])
-    
     df_plot_melt = df_votos_plot.melt(id_vars='Partido', var_name='Tipo de Voto', value_name='Total')
 
     fig_votos = px.bar(
@@ -147,6 +142,7 @@ else:
     fig_votos.update_layout(xaxis_title="Partido", yaxis_title="Número Total de Votos")
     st.plotly_chart(fig_votos, use_container_width=True)
 
+    # 2. Tabela Detalhada
     st.markdown("##### Detalhamento da Votação Nominal (Contagem de Votos):")
     st.dataframe(
         df_votos_partido.sort_values(by='Total Votos', ascending=False),
@@ -155,4 +151,4 @@ else:
     )
 
 st.markdown("---")
-st.success("Análise de transparência finalizada. Os dados de conteúdo, orientação e votação estão completos.")
+st.success("Análise de transparência finalizada. Os dados de orientação e votação estão completos.")

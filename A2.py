@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 import requests
 import json
 import time
@@ -13,7 +14,7 @@ URL_API_BASE = "https://dadosabertos.camara.leg.br/api/v2/"
 URL_PROPOSICAO_DETALHE = f"{URL_API_BASE}proposicoes/{ID_PROPOSICAO}"
 URL_VOTOS = f"{URL_API_BASE}votacoes/{ID_VOTACAO}/votos"
 
-# EMENTA FORÇADA: O texto exato fornecido pelo usuário
+# EMENTA FIXA: O texto exato fornecido pelo usuário
 EMENTA_FIXA = "Altera os arts. 14, 27, 53, 102 e 105 da Constituição Federal, para dispor sobre as prerrogativas parlamentares e dá outras providências."
 
 # --- 2. FUNÇÕES DE BUSCA E PROCESSAMENTO ---
@@ -38,10 +39,8 @@ def obter_dados_juridicos():
     if dados_proposicao:
         titulo = dados_proposicao.get('siglaTipo', 'PEC') + ' ' + str(dados_proposicao.get('numero', '03')) + '/' + str(dados_proposicao.get('ano', '2021'))
         
-        # Tentativa robusta de extrair ementa, caso contrário, usa a fixa
         ementa_api = dados_proposicao.get('ementa', EMENTA_FIXA)
         
-        # Lógica de Status
         status_final = dados_proposicao.get('statusProposicao', {}).get('descricaoSituacao', 'Em Tramitação')
         
         if 'promulgada' in status_final.lower() or 'sancionada' in status_final.lower() or 'transformada em norma' in status_final.lower():
@@ -56,7 +55,6 @@ def obter_dados_juridicos():
         
         return titulo, ementa_api, status_juridico, status_cor
     
-    # Retorno em caso de falha TOTAL da API
     return "PEC 03/2021", EMENTA_FIXA, "ERRO DE DADOS/API INACESSÍVEL", "red"
 
 def processar_votos_nominais_tabela(dados_votos):
@@ -65,8 +63,8 @@ def processar_votos_nominais_tabela(dados_votos):
         return pd.DataFrame()
 
     lista_votos = dados_votos.get('dados', [])
-    
     dados_tabela = []
+    
     for voto in lista_votos:
         deputado_info = voto.get('deputado', {})
         
@@ -78,6 +76,21 @@ def processar_votos_nominais_tabela(dados_votos):
         })
         
     return pd.DataFrame(dados_tabela)
+
+def agrupar_votos_por_partido(df_votos):
+    """Cria o DataFrame agrupado por partido para o gráfico de barras."""
+    
+    # Mapear e contar os votos
+    df_votos['Sim'] = df_votos['Voto Nominal'].apply(lambda x: 1 if x == 'Sim' else 0)
+    df_votos['Não'] = df_votos['Voto Nominal'].apply(lambda x: 1 if x == 'Não' else 0)
+    df_votos['Abstenção'] = df_votos['Voto Nominal'].apply(lambda x: 1 if x == 'Abstenção' else 0)
+    df_votos['Outro'] = df_votos['Voto Nominal'].apply(lambda x: 1 if x not in ['Sim', 'Não', 'Abstenção'] else 0)
+
+    df_agrupado = df_votos.groupby('Partido')[['Sim', 'Não', 'Abstenção', 'Outro']].sum().reset_index()
+    df_agrupado['Total Votos'] = df_agrupado[['Sim', 'Não', 'Abstenção', 'Outro']].sum(axis=1)
+    
+    return df_agrupado.sort_values(by='Total Votos', ascending=False)
+
 
 # --- 3. INTERFACE STREAMLIT PRINCIPAL ---
 
@@ -95,7 +108,7 @@ st.sidebar.button("Resetar Cache da API", on_click=limpar_cache_api)
 st.markdown("---")
 
 # =========================================================
-# SEÇÃO 1: STATUS JURÍDICO E EMENTA (CORRIGIDO)
+# SEÇÃO 1: STATUS JURÍDICO E EMENTA
 # =========================================================
 
 col_titulo, col_status = st.columns([3, 1])
@@ -119,24 +132,28 @@ st.markdown("---")
 # =========================================================
 
 st.subheader("Votação Nominal Aberta (Registro de Cada Parlamentar)")
-st.caption(f"Esta tabela mostra o voto individual de cada deputado na votação {ID_VOTACAO} (Substitutivo em 1º Turno).")
+st.caption(f"Dados obtidos para a votação {ID_VOTACAO} (Substitutivo em 1º Turno).")
 
 if df_votos_nominais.empty:
     st.error("ERRO: Não foi possível carregar a lista de votos nominais. A API da Câmara não retornou dados para /votos.")
 else:
-    # 1. Gráfico de Pizza (Síntese)
-    contagem_votos = df_votos_nominais['Voto Nominal'].value_counts().reset_index()
-    contagem_votos.columns = ['Voto', 'Total']
+    # 1. Gráfico de Barras por Partido (RESTITUIDO)
+    df_votos_agrupados = agrupar_votos_por_partido(df_votos_nominais.copy())
+    
+    df_votos_plot = df_votos_agrupados.drop(columns=['Total Votos', 'Outro'])
+    df_plot_melt = df_votos_plot.melt(id_vars='Partido', var_name='Tipo de Voto', value_name='Total')
 
-    fig_pizza = px.pie(
-        contagem_votos,
-        values='Total',
-        names='Voto',
-        title='Proporção Global de Votos Registrados',
-        hole=.5,
-        color_discrete_map={'Sim': 'green', 'Não': 'red', 'Abstenção': 'gold', 'Obstrução': 'darkred', 'Ausente': 'grey'}
+    fig_votos = px.bar(
+        df_plot_melt,
+        x='Partido',
+        y='Total',
+        color='Tipo de Voto',
+        title='Votos Registrados na PEC 03/2021 por Partido',
+        barmode='stack',
+        color_discrete_map={'Sim': 'green', 'Não': 'red', 'Abstenção': 'gold'}
     )
-    st.plotly_chart(fig_pizza, use_container_width=True)
+    fig_votos.update_layout(xaxis_title="Partido", yaxis_title="Número Total de Votos")
+    st.plotly_chart(fig_votos, use_container_width=True)
 
     # 2. Tabela Nominal Interativa
     st.markdown("##### Lista Nominal (Voto por Parlamentar):")

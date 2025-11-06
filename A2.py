@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import requests
 import json
 import time
@@ -11,9 +10,11 @@ ID_PROPOSICAO = "2270800"
 ID_VOTACAO = "2270800-175" 
 
 URL_API_BASE = "https://dadosabertos.camara.leg.br/api/v2/"
-# CORRIGIDO: A URL de detalhe da Proposição é onde está a ementa
-URL_PROPOSICAO_DETALHE = f"{URL_API_BASE}proposicoes/{ID_PROPOSICAO}" 
+URL_PROPOSICAO_DETALHE = f"{URL_API_BASE}proposicoes/{ID_PROPOSICAO}"
 URL_VOTOS = f"{URL_API_BASE}votacoes/{ID_VOTACAO}/votos"
+
+# EMENTA FORÇADA: O texto exato fornecido pelo usuário
+EMENTA_FIXA = "Altera os arts. 14, 27, 53, 102 e 105 da Constituição Federal, para dispor sobre as prerrogativas parlamentares e dá outras providências."
 
 # --- 2. FUNÇÕES DE BUSCA E PROCESSAMENTO ---
 
@@ -23,23 +24,24 @@ def limpar_cache_api():
 
 @st.cache_data(ttl=3600)
 def buscar_dados(url):
-    """Função robusta para buscar dados da API e retornar JSON."""
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        # st.error(f"Falha ao acessar API: {url}. Erro: {e}") 
         return None
 
 def obter_dados_juridicos():
-    """Busca Título, Ementa (da URL de Proposição) e Situação Final."""
+    """Busca Título e Situação Final da PEC, usando a EMENTA FIXA."""
     dados_proposicao = buscar_dados(URL_PROPOSICAO_DETALHE)
     
     if dados_proposicao:
         titulo = dados_proposicao.get('siglaTipo', 'PEC') + ' ' + str(dados_proposicao.get('numero', '03')) + '/' + str(dados_proposicao.get('ano', '2021'))
-        ementa = dados_proposicao.get('ementa', 'Ementa não disponível na API.')
         
+        # Tentativa robusta de extrair ementa, caso contrário, usa a fixa
+        ementa_api = dados_proposicao.get('ementa', EMENTA_FIXA)
+        
+        # Lógica de Status
         status_final = dados_proposicao.get('statusProposicao', {}).get('descricaoSituacao', 'Em Tramitação')
         
         if 'promulgada' in status_final.lower() or 'sancionada' in status_final.lower() or 'transformada em norma' in status_final.lower():
@@ -52,8 +54,10 @@ def obter_dados_juridicos():
             status_juridico = "EM TRAMITAÇÃO"
             status_cor = "orange"
         
-        return titulo, ementa, status_juridico, status_cor
-    return "PEC 03/2021", "Falha ao carregar conteúdo da PEC.", "ERRO DE DADOS", "red"
+        return titulo, ementa_api, status_juridico, status_cor
+    
+    # Retorno em caso de falha TOTAL da API
+    return "PEC 03/2021", EMENTA_FIXA, "ERRO DE DADOS/API INACESSÍVEL", "red"
 
 def processar_votos_nominais_tabela(dados_votos):
     """Processa o JSON de votos nominais em um DataFrame para TABELA NOMINAL."""
@@ -79,10 +83,8 @@ def processar_votos_nominais_tabela(dados_votos):
 
 st.set_page_config(layout="wide", page_title="Análise PEC 03/2021")
 
-# 1. Carregamento dos dados jurídicos (Ementa e Status)
+# Carregamento dos dados jurídicos
 titulo, ementa, status_juridico, status_cor = obter_dados_juridicos()
-
-# 2. Carregamento dos votos nominais (o que pode falhar)
 dados_votos_raw = buscar_dados(URL_VOTOS)
 df_votos_nominais = processar_votos_nominais_tabela(dados_votos_raw)
 
@@ -117,10 +119,10 @@ st.markdown("---")
 # =========================================================
 
 st.subheader("Votação Nominal Aberta (Registro de Cada Parlamentar)")
-st.caption(f"Dados obtidos para a votação {ID_VOTACAO} (Substitutivo em 1º Turno).")
+st.caption(f"Esta tabela mostra o voto individual de cada deputado na votação {ID_VOTACAO} (Substitutivo em 1º Turno).")
 
 if df_votos_nominais.empty:
-    st.error("ERRO: Não foi possível carregar a lista de votos nominais (API da Câmara não retornou dados para /votos).")
+    st.error("ERRO: Não foi possível carregar a lista de votos nominais. A API da Câmara não retornou dados para /votos.")
 else:
     # 1. Gráfico de Pizza (Síntese)
     contagem_votos = df_votos_nominais['Voto Nominal'].value_counts().reset_index()
@@ -139,7 +141,7 @@ else:
     # 2. Tabela Nominal Interativa
     st.markdown("##### Lista Nominal (Voto por Parlamentar):")
     st.dataframe(
-        df_votos_nominais.sort_values(by=['Partido', 'Voto Nominal'], ascending=[True, False]),
+        df_votos_nominais,
         use_container_width=True,
         hide_index=True,
     )

@@ -5,7 +5,7 @@ import requests
 import json
 import time
 
-# --- 1. CONFIGURAÇÃO E VARIÁVEIS GLOBAIS (URLs Fixas) ---
+# --- O código de CONFIGURAÇÃO e FUNÇÕES (get_dados, processar_votos...) permanece INALTERADO ---
 
 ID_PROPOSICAO = "2270800"
 ID_VOTACAO = "2270800-175" 
@@ -14,10 +14,7 @@ URL_API_BASE = "https://dadosabertos.camara.leg.br/api/v2/"
 URL_PROPOSICAO_DETALHE = f"{URL_API_BASE}proposicoes/{ID_PROPOSICAO}"
 URL_VOTOS = f"{URL_API_BASE}votacoes/{ID_VOTACAO}/votos"
 
-# EMENTA FIXA: O texto exato fornecido pelo usuário
 EMENTA_FIXA = "Altera os arts. 14, 27, 53, 102 e 105 da Constituição Federal, para dispor sobre as prerrogativas parlamentares e dá outras providências."
-
-# --- 2. FUNÇÕES DE BUSCA E PROCESSAMENTO ---
 
 def limpar_cache_api():
     st.cache_data.clear()
@@ -33,14 +30,11 @@ def buscar_dados(url):
         return None
 
 def obter_dados_juridicos():
-    """Busca Título e Situação Final da PEC, usando a EMENTA FIXA."""
     dados_proposicao = buscar_dados(URL_PROPOSICAO_DETALHE)
     
     if dados_proposicao:
         titulo = dados_proposicao.get('siglaTipo', 'PEC') + ' ' + str(dados_proposicao.get('numero', '03')) + '/' + str(dados_proposicao.get('ano', '2021'))
-        
         ementa_api = dados_proposicao.get('ementa', EMENTA_FIXA)
-        
         status_final = dados_proposicao.get('statusProposicao', {}).get('descricaoSituacao', 'Em Tramitação')
         
         if 'promulgada' in status_final.lower() or 'sancionada' in status_final.lower() or 'transformada em norma' in status_final.lower():
@@ -58,7 +52,6 @@ def obter_dados_juridicos():
     return "PEC 03/2021", EMENTA_FIXA, "ERRO DE DADOS/API INACESSÍVEL", "red"
 
 def processar_votos_nominais_tabela(dados_votos):
-    """Processa o JSON de votos nominais em um DataFrame de votos brutos."""
     if not dados_votos or not dados_votos.get('dados'):
         return pd.DataFrame()
 
@@ -78,8 +71,6 @@ def processar_votos_nominais_tabela(dados_votos):
     return pd.DataFrame(dados_tabela)
 
 def agrupar_votos_por_partido(df_votos):
-    """Cria o DataFrame agrupado por partido para o gráfico de barras."""
-    
     df_votos['Sim'] = df_votos['Voto Nominal'].apply(lambda x: 1 if x == 'Sim' else 0)
     df_votos['Não'] = df_votos['Voto Nominal'].apply(lambda x: 1 if x == 'Não' else 0)
     df_votos['Abstenção'] = df_votos['Voto Nominal'].apply(lambda x: 1 if x == 'Abstenção' else 0)
@@ -90,12 +81,12 @@ def agrupar_votos_por_partido(df_votos):
     
     return df_agrupado.sort_values(by='Total Votos', ascending=False)
 
+# --- FIM DAS FUNÇÕES DE BUSCA/PROCESSAMENTO ---
 
 # --- 3. INTERFACE STREAMLIT PRINCIPAL ---
 
 st.set_page_config(layout="wide", page_title="Análise PEC 03/2021")
 
-# Carregamento dos dados jurídicos
 titulo, ementa, status_juridico, status_cor = obter_dados_juridicos()
 dados_votos_raw = buscar_dados(URL_VOTOS)
 df_votos_nominais = processar_votos_nominais_tabela(dados_votos_raw)
@@ -130,7 +121,6 @@ st.markdown("---")
 # SEÇÃO 2: GRÁFICO DE VOTAÇÃO POR PARTIDO (Título Alterado)
 # =========================================================
 
-# Título ajustado para apenas 'Total de votos em plenário'
 st.subheader("Total de votos em plenário")
 
 if df_votos_nominais.empty:
@@ -142,42 +132,46 @@ else:
     # CALCULA E EXIBE O TOTAL GERAL DE VOTOS REGISTRADOS
     total_votos_registrados = df_votos_agrupados['Total Votos'].sum()
 
-    # --- KPI GERAL ---
-    col_geral_total, col_vazio1, col_vazio2 = st.columns(3)
-    with col_geral_total:
-        st.metric("Total de Votos Registrados (Plenário)", f"{total_votos_registrados:,}".replace(",", "."))
-    
-    st.markdown("---")
-    
     # --- NOVO CÁLCULO: Votos do PL ---
-    st.subheader("Análise do Voto do Partido Liberal (PL)")
+    # Usamos o df_votos_agrupados para garantir que a sigla seja a que a API retornou
+    sigla_pl_encontrada = 'PL' # Assumimos PL como padrão
     
-    # 1. Filtra os votos apenas para o Partido Liberal (PL)
-    df_votos_pl = df_votos_nominais[df_votos_nominais['Partido'] == 'PL']
-    
-    # 2. Conta os votos (Sim, Não, Abstenção)
-    votos_pl_contagem = df_votos_pl['Voto Nominal'].value_counts()
-    
-    # 3. Extrai as contagens, tratando o caso em que 'Sim' ou 'Não' não existe (retorna 0)
-    votos_pl_sim = votos_pl_contagem.get('Sim', 0)
-    votos_pl_nao = votos_pl_contagem.get('Não', 0)
-    votos_pl_total_participantes = votos_pl_contagem.sum()
-    
-    col_pl_total, col_pl_sim, col_pl_nao = st.columns(3)
-    
-    with col_pl_total:
-        st.metric("Deputados do PL Participantes", votos_pl_total_participantes)
-        
-    with col_pl_sim:
-        st.metric("Votos PL: Sim (A Favor)", votos_pl_sim)
+    # Tentamos encontrar uma sigla que contenha 'PL' no nome, mas focamos no 'PL'
+    if 'PL' in df_votos_agrupados['Partido'].values:
+        dados_pl = df_votos_agrupados[df_votos_agrupados['Partido'] == 'PL'].iloc[0]
+    else:
+        # Se PL não estiver lá, tentamos encontrar uma sigla similar
+        siglas_similares = df_votos_agrupados[df_votos_agrupados['Partido'].str.contains('PL', case=False, na=False)]
+        if not siglas_similares.empty:
+             dados_pl = siglas_similares.iloc[0]
+             sigla_pl_encontrada = dados_pl['Partido']
+        else:
+             dados_pl = None # Não encontrado
 
-    with col_pl_nao:
-        st.metric("Votos PL: Não (Contra)", votos_pl_nao)
+    # --- DISPLAY ---
+    col_geral_total, col_pl_total, col_pl_sim, col_pl_nao = st.columns(4)
+
+    with col_geral_total:
+        st.metric("Total de Votos Registrados", f"{total_votos_registrados:,}".replace(",", "."))
+    
+    if dados_pl is not None:
+        votos_pl_sim = dados_pl['Sim']
+        votos_pl_nao = dados_pl['Não']
+        votos_pl_total_participantes = dados_pl['Total Votos']
         
+        with col_pl_total:
+            st.metric(f"Votos {sigla_pl_encontrada} (Participantes)", votos_pl_total_participantes)
+        with col_pl_sim:
+            st.metric("Votos Sim (A Favor)", votos_pl_sim)
+        with col_pl_nao:
+            st.metric("Votos Não (Contra)", votos_pl_nao)
+    else:
+        st.warning("Sigla 'PL' não encontrada diretamente no resultado da votação nominal.")
+
+
     st.markdown("---")
     
     # Gráfico de Barras por Partido
-    st.markdown("#### Distribuição de Votos por Partido")
     df_votos_plot = df_votos_agrupados.drop(columns=['Total Votos', 'Outro'])
     df_plot_melt = df_votos_plot.melt(id_vars='Partido', var_name='Tipo de Voto', value_name='Total')
 
@@ -194,4 +188,4 @@ else:
     st.plotly_chart(fig_votos, use_container_width=True)
 
 st.markdown("---")
-st.success("Análise de transparência concluída.")
+st.success("Análise de transparência finalizada.")

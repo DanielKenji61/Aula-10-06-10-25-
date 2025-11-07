@@ -33,13 +33,14 @@ def buscar_dados(url):
         return None
 
 def obter_dados_juridicos():
-    titulo = "PEC 03/2021"
-
+    """Busca Título e Situação Final da PEC, usando a EMENTA FIXA."""
     dados_proposicao = buscar_dados(URL_PROPOSICAO_DETALHE)
     
     if dados_proposicao:
         titulo = dados_proposicao.get('siglaTipo', 'PEC') + ' ' + str(dados_proposicao.get('numero', '03')) + '/' + str(dados_proposicao.get('ano', '2021'))
+        
         ementa_api = dados_proposicao.get('ementa', EMENTA_FIXA)
+        
         status_final = dados_proposicao.get('statusProposicao', {}).get('descricaoSituacao', 'Em Tramitação')
         
         if 'promulgada' in status_final.lower() or 'sancionada' in status_final.lower() or 'transformada em norma' in status_final.lower():
@@ -54,9 +55,10 @@ def obter_dados_juridicos():
         
         return titulo, ementa_api, status_juridico, status_cor
     
-    return titulo, EMENTA_FIXA, "ERRO DE DADOS/API INACESSÍVEL", "red"
+    return "PEC 03/2021", EMENTA_FIXA, "ERRO DE DADOS/API INACESSÍVEL", "red"
 
 def processar_votos_nominais_tabela(dados_votos):
+    """Processa o JSON de votos nominais em um DataFrame de votos brutos."""
     if not dados_votos or not dados_votos.get('dados'):
         return pd.DataFrame()
 
@@ -76,6 +78,8 @@ def processar_votos_nominais_tabela(dados_votos):
     return pd.DataFrame(dados_tabela)
 
 def agrupar_votos_por_partido(df_votos):
+    """Cria o DataFrame agrupado por partido para o gráfico de barras."""
+    
     df_votos['Sim'] = df_votos['Voto Nominal'].apply(lambda x: 1 if x == 'Sim' else 0)
     df_votos['Não'] = df_votos['Voto Nominal'].apply(lambda x: 1 if x == 'Não' else 0)
     df_votos['Abstenção'] = df_votos['Voto Nominal'].apply(lambda x: 1 if x == 'Abstenção' else 0)
@@ -85,22 +89,6 @@ def agrupar_votos_por_partido(df_votos):
     df_agrupado['Total Votos'] = df_agrupado[['Sim', 'Não', 'Abstenção', 'Outro']].sum(axis=1)
     
     return df_agrupado.sort_values(by='Total Votos', ascending=False)
-
-def analisar_votos_pl_2021(df_votos_agrupados):
-    """Analisa os votos de siglas que formavam a base do PL/PSL em 2021."""
-    
-    # Siglas relevantes na época da votação (2021) que hoje se agruparam
-    SIGLAS_ALVO = ['PSL', 'PL', 'DEM', 'PSC', 'PP', 'PSDB'] 
-    
-    # 1. Filtra o DataFrame agrupado
-    df_pl_base = df_votos_agrupados[df_votos_agrupados['Partido'].isin(SIGLAS_ALVO)].copy()
-    
-    # 2. Soma os resultados
-    votos_sim = df_pl_base['Sim'].sum()
-    votos_nao = df_pl_base['Não'].sum()
-    total_participantes = df_pl_base['Total Votos'].sum()
-
-    return total_participantes, votos_sim, votos_nao
 
 
 # --- 3. INTERFACE STREAMLIT PRINCIPAL ---
@@ -139,9 +127,10 @@ with col_status:
 st.markdown("---")
 
 # =========================================================
-# SEÇÃO 2: GRÁFICO DE VOTAÇÃO POR PARTIDO
+# SEÇÃO 2: GRÁFICO DE VOTAÇÃO POR PARTIDO (Título Alterado)
 # =========================================================
 
+# Título ajustado para apenas 'Total de votos em plenário'
 st.subheader("Total de votos em plenário")
 
 if df_votos_nominais.empty:
@@ -153,26 +142,8 @@ else:
     # CALCULA E EXIBE O TOTAL GERAL DE VOTOS REGISTRADOS
     total_votos_registrados = df_votos_agrupados['Total Votos'].sum()
 
-    # --- ANÁLISE DE FIDELIDADE (KPIs) ---
-    total_part, votos_sim, votos_nao = analisar_votos_pl_2021(df_votos_agrupados)
-
-    col_geral_total, col_pl_total, col_pl_sim, col_pl_nao = st.columns(4)
-
-    with col_geral_total:
-        st.metric("Total de Votos Registrados", f"{total_votos_registrados:,}".replace(",", "."))
+    st.metric("Total de Votos Registrados na Votação Nominal", f"{total_votos_registrados:,}".replace(",", "."))
     
-    if total_part > 0:
-        with col_pl_total:
-            st.metric("Base PSL/PL (Participantes)", total_part)
-        with col_pl_sim:
-            st.metric("Votos Sim (A Favor)", votos_sim)
-        with col_pl_nao:
-            st.metric("Votos Não (Contra)", votos_nao)
-    else:
-        with col_pl_total:
-             st.metric("Base PSL/PL (Participantes)", 0)
-        st.warning("O total de votos da Base PSL/PL foi zero. Isso pode ocorrer se as siglas de 2021 não estiverem na lista de busca.")
-
     st.markdown("---")
     
     # Gráfico de Barras por Partido
@@ -192,4 +163,4 @@ else:
     st.plotly_chart(fig_votos, use_container_width=True)
 
 st.markdown("---")
-st.success("Análise de transparência finalizada.")
+st.success("Análise de transparência concluída.")

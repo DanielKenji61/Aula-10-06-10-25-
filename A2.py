@@ -142,11 +142,42 @@ else:
     # CALCULA E EXIBE O TOTAL GERAL DE VOTOS REGISTRADOS
     total_votos_registrados = df_votos_agrupados['Total Votos'].sum()
 
-    st.metric("Total de Votos Registrados na Votação Nominal", f"{total_votos_registrados:,}".replace(",", "."))
+    # --- KPI GERAL ---
+    col_geral_total, col_vazio1, col_vazio2 = st.columns(3)
+    with col_geral_total:
+        st.metric("Total de Votos Registrados (Plenário)", f"{total_votos_registrados:,}".replace(",", "."))
     
     st.markdown("---")
     
+    # --- NOVO CÁLCULO: Votos do PL ---
+    st.subheader("Análise do Voto do Partido Liberal (PL)")
+    
+    # 1. Filtra os votos apenas para o Partido Liberal (PL)
+    df_votos_pl = df_votos_nominais[df_votos_nominais['Partido'] == 'PL']
+    
+    # 2. Conta os votos (Sim, Não, Abstenção)
+    votos_pl_contagem = df_votos_pl['Voto Nominal'].value_counts()
+    
+    # 3. Extrai as contagens, tratando o caso em que 'Sim' ou 'Não' não existe (retorna 0)
+    votos_pl_sim = votos_pl_contagem.get('Sim', 0)
+    votos_pl_nao = votos_pl_contagem.get('Não', 0)
+    votos_pl_total_participantes = votos_pl_contagem.sum()
+    
+    col_pl_total, col_pl_sim, col_pl_nao = st.columns(3)
+    
+    with col_pl_total:
+        st.metric("Deputados do PL Participantes", votos_pl_total_participantes)
+        
+    with col_pl_sim:
+        st.metric("Votos PL: Sim (A Favor)", votos_pl_sim)
+
+    with col_pl_nao:
+        st.metric("Votos PL: Não (Contra)", votos_pl_nao)
+        
+    st.markdown("---")
+    
     # Gráfico de Barras por Partido
+    st.markdown("#### Distribuição de Votos por Partido")
     df_votos_plot = df_votos_agrupados.drop(columns=['Total Votos', 'Outro'])
     df_plot_melt = df_votos_plot.melt(id_vars='Partido', var_name='Tipo de Voto', value_name='Total')
 

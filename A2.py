@@ -4,30 +4,32 @@ import plotly.express as px
 import requests
 import json
 import time
-from urllib.parse import urlparse
 
-# --- 1. CONFIGURAÇÃO E VARIÁVEIS GLOBAIS (URLs Fixas) ---
-
-ID_PROPOSICAO = "2387114"
-ID_VOTACAO = "2387114-177" 
-ID_PL_ATIVO = 37905
-LEGISLATURA_ALVO = 57
+# --- 1. CONFIGURAÇÃO E DADOS FIXOS (57ª LEGISLATURA) ---
 
 URL_API_BASE = "https://dadosabertos.camara.leg.br/api/v2/"
-URL_VOTOS = f"{URL_API_BASE}votacoes/{ID_VOTACAO}/votos"
-URL_MEMBROS_PL_57 = f"{URL_API_BASE}partidos/{ID_PL_ATIVO}/membros?idLegislatura={LEGISLATURA_ALVO}"
-URL_PROPOSICAO_DETALHE = f"{URL_API_BASE}proposicoes/{ID_PROPOSICAO}"
+LEGISLATURA_ALVO = 57
 
-# Variável de Controle (Para você inserir a Ementa)
-EMENTA_CUSTOMIZADA = "" # Deixe em branco; você pode inserir aqui o resumo.
-STATUS_APROVADO = "Aprovado" # Usado como referência para o status da votação
+# DEFINIÇÃO DOS DOIS PROJETOS A SEREM COMPARADOS
+PROJETOS = {
+    "PLP 177/2023 (Fixação de Deputados)": {
+        "ID_PROPOSICAO": "2387114",
+        "ID_VOTACAO": "2387114-177",
+        "TIPO_VOTACAO": "Substitutivo (Mérito)"
+    },
+    "PL 29/2023 (Telecomunicações)": {
+        "ID_PROPOSICAO": "2372562",
+        "ID_VOTACAO": "2372562-111", # ID da votação do Texto-Base
+        "TIPO_VOTACAO": "Texto-Base"
+    }
+}
 
-# --- 2. FUNÇÕES DE BUSCA E PROCESSAMENTO ---
+# --- 2. FUNÇÕES DE BUSCA E PROCESSAMENTO DA API ---
 
 def limpar_cache_api():
     """Limpa o cache do Streamlit e reinicia a execução."""
     st.cache_data.clear()
-    st.rerun()
+    st.experimental_rerun()
 
 @st.cache_data(ttl=3600)
 def buscar_dados(url):
@@ -36,186 +38,174 @@ def buscar_dados(url):
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         return response.json()
-    except requests.exceptions.RequestException:
+    except requests.exceptions.RequestException as e:
+        # st.error(f"Falha na conexão com a API: {url}")
         return None
 
-@st.cache_data(ttl=3600)
-def obter_dados_juridicos_e_votos():
-    """Busca o status da votação e os votos nominais."""
-    
-    # 1. Busca STATUS DA VOTAÇÃO (para saber se foi Aprovada)
-    dados_votacao = buscar_dados(f"{URL_API_BASE}votacoes/{ID_VOTACAO}")
-    status_aprovacao = "N/A"
-    if dados_votacao:
-        # Tenta extrair a aprovação da votação
-        status_aprovacao = dados_votacao.get('aprovacao', 'Não Registrado')
-        
-    # 2. Busca VOTOS NOMINAIS
-    dados_votos_raw = buscar_dados(URL_VOTOS)
-    
-    # 3. Processa a lista de votos nominais
+def processar_votos_nominais(id_votacao):
+    """
+    Busca a lista de votos nominais e processa o DataFrame agrupado por partido.
+    Retorna o DataFrame nominal (para contagem) e o DataFrame agrupado.
+    """
+    url_votos = f"{URL_API_BASE}votacoes/{id_votacao}/votos"
+    dados_votos_raw = buscar_dados(url_votos)
+
     if not dados_votos_raw or not dados_votos_raw.get('dados'):
-        df_votos = pd.DataFrame()
-    else:
-        lista_votos = dados_votos_raw.get('dados', [])
+        return pd.DataFrame(), pd.DataFrame()
+
+    lista_votos = dados_votos_raw.get('dados', [])
+    
+    # DataFrame Nominal Bruto (Necessário para o agrupamento)
+    df_votos = pd.DataFrame([
+        {
+            'Nome do Deputado': voto.get('deputado', {}).get('nome', 'N/A'),
+            'Partido': voto.get('deputado', {}).get('siglaPartido', 'N/A'),
+            'ID Deputado': voto.get('deputado', {}).get('id', 0),
+            'Voto Nominal': voto.get('tipoVoto', 'N/A')
+        } for voto in lista_votos
+    ])
+
+    # DataFrame Agrupado (Para o Gráfico de Barras)
+    df_agrupado = df_votos.groupby('Partido')['Voto Nominal'].value_counts().unstack(fill_value=0)
+    
+    # Garantir que as colunas essenciais existam
+    for col in ['Sim', 'Não', 'Abstenção', 'Obstrução', 'Ausente']:
+        if col not in df_agrupado.columns:
+            df_agrupado[col] = 0
+            
+    df_agrupado['Total Votos'] = df_agrupado[['Sim', 'Não', 'Abstenção', 'Obstrução', 'Ausente']].sum(axis=1)
+    df_agrupado = df_agrupado.reset_index().sort_values(by='Total Votos', ascending=False)
+    
+    return df_votos, df_agrupado
+
+
+# --- 3. FUNÇÕES DE ANÁLISE E GRÁFICOS ---
+
+def analisar_desempenho_partido(df_agrupado, sigla_partido='PL'):
+    """Extrai os votos Sim e Não para o partido alvo (PL) dos dados agrupados."""
+    
+    try:
+        # Acessa a linha do partido alvo (PL)
+        dados_pl = df_agrupado[df_agrupado['Partido'] == sigla_partido].iloc[0]
         
-        dados_tabela = []
-        for voto in lista_votos:
-            deputado_info = voto.get('deputado', {})
-            dados_tabela.append({
-                'Nome do Deputado': deputado_info.get('nome', 'N/A'),
-                'Partido': deputado_info.get('siglaPartido', 'N/A'),
-                'ID Deputado': deputado_info.get('id', 0), # Usado para comparação
-                'Voto Nominal': voto.get('tipoVoto', 'N/A')
-            })
-        df_votos = pd.DataFrame(dados_tabela)
+        votos_sim = dados_pl.get('Sim', 0)
+        votos_nao = dados_pl.get('Não', 0)
+        total_participantes = dados_pl.get('Total Votos', 0)
         
-    return df_votos, status_aprovacao
-
-@st.cache_data(ttl=3600)
-def buscar_membros_pl_ids(url_membros):
-    """Busca os IDs de todos os membros do PL na 57ª Legislatura."""
-    dados = buscar_dados(url_membros)
-    if dados and dados.get('dados'):
-        # Retorna um set de IDs para busca rápida
-        return {membro.get('id') for membro in dados['dados'] if membro.get('id')}
-    return set()
-
-# --- 3. INTERFACE STREAMLIT PRINCIPAL ---
-
-st.set_page_config(layout="wide", page_title="Monitor PLP 177/2023")
-
-st.title("⚖️ Análise de Votação: PLP 177/2023")
-st.header("Fidelidade Partidária do Partido Liberal (PL)")
-
-# --- EXECUÇÃO PRINCIPAL DE BUSCA ---
-df_votos_nominais, status_aprovacao = obter_dados_juridicos_e_votos()
-membros_pl_ids = buscar_membros_pl_ids(URL_MEMBROS_PL_57)
-st.sidebar.button("Resetar Cache da API", on_click=limpar_cache_api)
-st.markdown("---")
-
-# =========================================================
-# SEÇÃO 1: STATUS JURÍDICO E EMENTA (Input Manual)
-# =========================================================
-
-col_proposta, col_status_box = st.columns([3, 1])
-
-with col_proposta:
-    st.subheader("PLP 177/2023")
-    st.markdown("#### Ementa:")
-    
-    # Input para você colar o resumo da Ementa
-    ementa_resumo = st.text_area(
-        "Resumo da Ementa (Edite para adicionar o texto):",
-        value=EMENTA_CUSTOMIZADA or "Aguardando Ementa Jurídica..." ,
-        height=100
-    )
-
-with col_status_box:
-    st.markdown("#### Votação em Plenário:")
-    
-    # Define a cor do status
-    if status_aprovacao == STATUS_APROVADO:
-        status_display = "APROVADO"
-        status_cor = "green"
-    elif status_aprovacao == "Rejeitado":
-        status_display = "REJEITADO"
-        status_cor = "red"
-    else:
-        status_display = "NÃO REGISTRADO / EM ANDAMENTO"
-        status_cor = "orange"
+        # Determina a posição majoritária
+        if votos_sim > votos_nao:
+            posicao = "A Favor (Sim)"
+        elif votos_nao > votos_sim:
+            posicao = "Contra (Não)"
+        else:
+            posicao = "Neutro/Dividido"
+            
+        return total_participantes, votos_sim, votos_nao, posicao
         
-    st.markdown(
-        f"<div style='background-color: {status_cor}; color: white; padding: 10px; border-radius: 5px; text-align: center;'><b>{status_display}</b></div>", 
-        unsafe_allow_html=True
-    )
-    
-st.markdown("---")
+    except IndexError:
+        # O partido PL pode não ter votado ou não ter deputados na votação
+        return 0, 0, 0, "Sem Voto Registrado"
 
-# =========================================================
-# SEÇÃO 2: GRÁFICOS E ANÁLISE DE FIDELIDADE (Dados Reais)
-# =========================================================
 
-if df_votos_nominais.empty:
-    st.error("ERRO: Não foi possível carregar os votos nominais. O ID da votação pode estar incorreto ou a API falhou.")
-else:
-    # 1. PRÉ-PROCESSAMENTO: Agrupamento de Votos
-    df_votos_agrupados = df_votos_nominais.copy()
-    
-    df_votos_agrupados['Sim'] = df_votos_agrupados['Voto Nominal'].apply(lambda x: 1 if x == 'Sim' else 0)
-    df_votos_agrupados['Não'] = df_votos_agrupados['Voto Nominal'].apply(lambda x: 1 if x == 'Não' else 0)
-    df_votos_agrupados['Abstenção'] = df_votos_agrupados['Voto Nominal'].apply(lambda x: 1 if x == 'Abstenção' else 0)
+# --- 4. INTERFACE STREAMLIT PRINCIPAL ---
 
-    # 2. ANÁLISE PL: Identifica e conta os votos do PL
-    
-    # Deputados do PL que votaram (Filtra pelo ID e pelo Partido na lista de votos)
-    df_pl_votos = df_votos_agrupados[
-        (df_votos_agrupados['Partido'] == 'PL') & 
-        (df_votos_agrupados['ID Deputado'].isin(membros_pl_ids))
-    ]
-    
-    # Contagem final
-    total_pl_votos = df_pl_votos.shape[0]
-    pl_sim = df_pl_votos['Sim'].sum()
-    pl_nao = df_pl_votos['Não'].sum()
-    
-    # Contagem Global
-    contagem_global = df_votos_agrupados.groupby('Voto Nominal').size()
-    total_votos_registrados = contagem_global.sum()
-    
-    # --- KPIs e Totais ---
-    st.subheader("Total de votos em plenário")
+st.set_page_config(layout="wide", page_title="Monitor de Votação PLP/PL")
 
-    col_geral_total, col_pl_total, col_pl_sim, col_pl_nao = st.columns(4)
+st.title("⚖️ Jurimetria Parlamentar: Comparativo de Votações")
+st.header("Análise de Voto por Partido na 57ª Legislatura")
 
-    with col_geral_total:
-        st.metric("Total de Votos Registrados", f"{total_votos_registrados:,}".replace(",", "."))
-    
-    with col_pl_total:
-        st.metric("Total de Votos da Bancada PL", total_pl_votos)
-        
-    with col_pl_sim:
-        st.metric("Votos PL: A Favor (Sim)", pl_sim)
-        
-    with col_pl_nao:
-        st.metric("Votos PL: Contra (Não)", pl_nao)
-
-    st.markdown("---")
-    
-    # 3. GRÁFICO: Votação Global (Pizza/Donut)
-    st.subheader("1. Distribuição Global dos Votos em Plenário")
-
-    df_pizza = contagem_global.reset_index(name='Total')
-    
-    fig_pizza = px.pie(
-        df_pizza,
-        values='Total',
-        names='Voto Nominal',
-        title='Proporção Total de Votos Registrados (Sim, Não, Abstenção)',
-        hole=.5,
-        color_discrete_map={'Sim': 'green', 'Não': 'red', 'Abstenção': 'gold', 'Obstrução': 'darkred', 'Ausente': 'grey'}
-    )
-    st.plotly_chart(fig_pizza, use_container_width=True)
-
+# --- BOTÃO DE LIMPEZA DE CACHE ---
+with st.sidebar:
+    st.markdown("### 🛠️ Configurações")
+    st.button("Resetar Dados (Limpar Cache da API)", on_click=limpar_cache_api)
+    st.caption("Use para forçar a busca de novos dados da Câmara.")
     st.markdown("---")
 
-    # 4. GRÁFICO: Fidelidade PL (Barras)
-    st.subheader("2. Fidelidade Partidária da Bancada PL (A Favor vs. Contra)")
+# --- SELETOR PRINCIPAL ---
+st.subheader("Selecione o Projeto para Análise Detalhada:")
+projeto_selecionado_nome = st.selectbox(
+    "Projeto (PLP ou PL):", 
+    list(PROJETOS.keys()),
+    index=0 # Padrão PLP 177/2023
+)
 
-    df_fidelidade = pd.DataFrame({
-        'Posição': ['A Favor', 'Contra', 'Abstenção/Outro'],
-        'Total': [pl_sim, pl_nao, total_pl_votos - pl_sim - pl_nao]
-    })
-    
-    fig_fidelidade = px.bar(
-        df_fidelidade,
-        x='Posição',
-        y='Total',
-        color='Posição',
-        title='Votos do Partido Liberal (PL) na Votação Nominal',
-        color_discrete_map={'A Favor': 'green', 'Contra': 'red', 'Abstenção/Outro': 'gold'}
-    )
-    st.plotly_chart(fig_fidelidade, use_container_width=True)
+# Define os IDs da votação e da proposição
+PROJETO_SELECIONADO = PROJETOS[projeto_selecionado_nome]
+ID_VOTACAO_SELECIONADA = PROJETO_SELECIONADO['ID_VOTACAO']
+TIPO_VOTACAO_SELECIONADA = PROJETO_SELECIONADO['TIPO_VOTACAO']
 
 st.markdown("---")
-st.success("Análise de transparência concluída e pronta para uso.")
+
+# --- EXECUÇÃO E CARREGAMENTO DE DADOS ---
+with st.spinner(f"Buscando votos nominais para {projeto_selecionado_nome} ({ID_VOTACAO_SELECIONADA})..."):
+    df_votos_nominais, df_votos_agrupados = processar_votos_nominais(ID_VOTACAO_SELECIONADA)
+
+if df_votos_agrupados.empty:
+    st.error("Falha Crítica: Não foi possível carregar os dados de votação da API. O ID pode estar incorreto ou o recurso está temporariamente bloqueado.")
+    st.stop()
+
+
+# --- ANÁLISE DO PL E KPIS ---
+total_votos_registrados = df_votos_agrupados['Total Votos'].sum()
+total_participantes_pl, pl_sim, pl_nao, posicao_pl = analisar_desempenho_partido(df_votos_agrupados, sigla_partido='PL')
+
+st.subheader(f"Resultado da Votação: {TIPO_VOTACAO_SELECIONADA}")
+
+col_geral_total, col_votos_pl, col_pl_sim, col_pl_nao = st.columns(4)
+
+with col_geral_total:
+    st.metric("Total de Votos Registrados", f"{total_votos_registrados:,}".replace(",", "."))
+
+# Exibir os votos do PL
+with col_votos_pl:
+    st.metric("Participação do Partido PL", f"{total_participantes_pl} Votos")
+with col_pl_sim:
+    st.metric("PL: Votos Sim (A Favor)", pl_sim)
+with col_pl_nao:
+    st.metric("PL: Votos Não (Contra)", pl_nao)
+
+st.markdown("---")
+
+# --- GRÁFICO DE BARRAS (VOTAÇÃO POR PARTIDO) ---
+
+st.subheader("1. Distribuição de Votos por Partido")
+st.caption("Gráfico interativo que mostra o posicionamento das bancadas (Sim/Não/Abstenção).")
+
+# Filtra colunas de voto para o gráfico
+df_plot = df_votos_agrupados.set_index('Partido')[['Sim', 'Não', 'Abstenção', 'Obstrução', 'Ausente']].reset_index()
+
+df_plot_melt = df_plot.melt(
+    id_vars='Partido', 
+    var_name='Tipo de Voto', 
+    value_vars=['Sim', 'Não', 'Abstenção'],
+    value_name='Total'
+)
+
+fig_votos = px.bar(
+    df_plot_melt,
+    x='Partido',
+    y='Total',
+    color='Tipo de Voto',
+    title=f'Votos Nominais na Proposição ({TIPO_VOTACAO_SELECIONADA})',
+    barmode='stack',
+    color_discrete_map={'Sim': 'green', 'Não': 'red', 'Abstenção': 'gold'}
+)
+fig_votos.update_layout(xaxis_title="Partido", yaxis_title="Número Total de Votos")
+st.plotly_chart(fig_votos, use_container_width=True)
+
+st.markdown("---")
+
+# Tabela de Detalhamento
+st.subheader("2. Tabela de Detalhamento Nominal (PL)")
+st.caption("Lista de como os deputados do Partido Liberal votaram.")
+
+df_pl_nominal = df_votos_nominais[df_votos_nominais['Partido'] == 'PL'].drop(columns=['ID Deputado'])
+
+st.dataframe(
+    df_pl_nominal.sort_values(by='Voto Nominal', ascending=False),
+    use_container_width=True,
+    hide_index=True
+)
+
+st.markdown("---")
+st.success("Análise de jurimetria concluída com sucesso! ✅")

@@ -10,8 +10,9 @@ from urllib.parse import urlparse
 # Base URL para a API da Câmara
 URL_BASE_API = "https://dadosabertos.camara.leg.br/api/v2/"
 
-# Dados dos Líderes com seus respectivos IDs e URLs
+# DADOS COMPLETOS DE TODOS OS 11 LÍDERES
 LIDERES = {
+    # ------------------- LÍDERES INICIAIS -------------------
     "Sóstenes Cavalcante (PL)": {
         "id": "178947",
         "partido": "PL",
@@ -54,6 +55,128 @@ LIDERES = {
             "Frentes": f"{URL_BASE_API}deputados/156190/frentes",
             "Profissoes": f"{URL_BASE_API}deputados/156190/profissoes",
             "Eventos": f"{URL_BASE_API}deputados/156190/eventos?dataInicio=2025-01-01&dataFim=2025-11-08&ordem=ASC&ordenarPor=dataHoraInicio"
+        }
+    },
+    # ------------------- NOVOS LÍDERES ADICIONADOS -------------------
+    "Antonio Brito (PSD)": {
+        "id": "160553",
+        "partido": "PSD",
+        "urls": {
+            "Gerais": f"{URL_BASE_API}deputados/160553",
+            "Despesas": f"{URL_BASE_API}deputados/160553/despesas?ordem=ASC&ordenarPor=ano",
+            "Frentes": f"{URL_BASE_API}deputados/160553/frentes",
+            "Profissoes": f"{URL_BASE_API}deputados/160553/profissoes",
+            "Eventos": f"{URL_BASE_API}deputados/160553/eventos?dataInicio=2025-01-01&dataFim=2025-11-08&ordem=ASC&ordenarPor=dataHoraInicio"
+        }
+    },
+    "Pedro Lucas Fernandes (UNIÃO)": {
+        "id": "122974",
+        "partido": "UNIÃO",
+        "urls": {
+            "Gerais": f"{URL_BASE_API}deputados/122974",
+            "Despesas": f"{URL_BASE_API}deputados/122974/despesas?ordem=ASC&ordenarPor=ano",
+            "Frentes": f"{URL_BASE_API}deputados/122974/frentes",
+            "Profissoes": f"{URL_BASE_API}deputados/122974/profissoes",
+            "Eventos": f"{URL_BASE_API}deputados/122974/eventos?dataInicio=2025-01-01&dataFim=2025-11-08&ordem=ASC&ordenarPor=dataHoraInicio"
+        }
+    },
+    "Dr. Luizinho (PP)": {
+        "id": "204450",
+        "partido": "PP",
+        "urls": {
+            "Gerais": f"{URL_BASE_API}deputados/204450",
+            "Despesas": f"{URL_BASE_API}deputados/204450/despesas?ordem=ASC&ordenarPor=ano",
+            "Frentes": f"{URL_BASE_API}deputados/204450/frentes",
+            "Profissoes": f"{URL_BASE_API}deputados/204450/profissoes",
+            "Eventos": f"{URL_BASE_API}deputados/204450/eventos?dataInicio=2025-01-01&dataFim=2025-11-08&ordem=ASC&ordenarPor=dataHoraInicio"
+        }
+    },
+    "Gilberto Abramo (REPUBLICANOS)": {
+        "id": "204491",
+        "partido": "REPUBLICANOS",
+        "urls": {
+            "Gerais": f"{URL_BASE_API}deputados/204491",
+            "Despesas": f"{URL_BASE_API}deputados/204491/despesas?ordem=ASC&ordenarPor=ano",
+            "Frentes": f"{URL_BASE_API}deputados/204491/frentes",
+            "Profissoes": f"{URL_BASE_API}deputados/204491/profissoes",
+            "Eventos": f"{URL_BASE_API}deputados/204491/eventos?dataInicio=2025-01-01&dataFim=2025-11-08&ordem=ASC&ordenarPor=dataHoraInicio"
+        }
+    },
+    "Isnaldo Bulhões Jr. (MDB)": {
+        "id": "204436",
+        "partido": "MDB",
+        "urls": {
+            "Gerais": f"{URL_BASE_API}deputados/204436",
+            "Despesas": f"{URL_BASE_API}deputados/204436/despesas?ordem=ASC&ordenarPor=ano",
+            "Frentes": f"{URL_BASE_API}deputados/204436/frentes",
+            "Profissoes": f"{URL_BASE_API}deputados/204436/profissoes",
+            "Eventos": f"{URL_BASE_API}deputados/204436/eventos?dataInicio=2025-01-01&dataFim=2025-11-08&ordem=ASC&ordenarPor=dataHoraInicio"
+        }
+    },
+    "Pedro Campos (PSB)": {
+        "id": "220667",
+        "partido": "PSB",
+        "urls": {
+            "Gerais": f"{URL_BASE_API}deputados/220667",
+            "Despesas": f"{URL_BASE_API}deputados/220667/despesas?ordem=ASC&ordenarPor=ano",
+            "Frentes": f"{URL_BASE_API}deputados/220667/frentes",
+            "Profissoes": f"{URL_BASE_API}deputados/220667/profissoes",
+            "Eventos": f"{URL_BASE_API}deputados/220667/eventos?dataInicio=2025-01-01&dataFim=2025-11-08&ordem=ASC&ordenarPor=dataHoraInicio"
+        }
+    },
+    "Mário Heringer (PDT)": {
+        "id": "74158",
+        "partido": "PDT",
+        "urls": {
+            "Gerais": f"{URL_BASE_API}deputados/74158",
+            "Despesas": f"{URL_BASE_API}deputados/74158/despesas?ordem=ASC&ordenarPor=ano",
+            "Frentes": f"{URL_BASE_API}deputados/74158/frentes",
+            "Profissoes": f"{URL_BASE_API}deputados/74158/profissoes",
+            "Eventos": f"{URL_BASE_API}deputados/74158/eventos?dataInicio=2025-01-01&dataFim=2025-11-08&ordem=ASC&ordenarPor=dataHoraInicio"
+        }
+    },
+    "Neto Carletto (AVANTE)": {
+        "id": "220703",
+        "partido": "AVANTE",
+        "urls": {
+            "Gerais": f"{URL_BASE_API}deputados/220703",
+            "Despesas": f"{URL_BASE_API}deputados/220703/despesas?ordem=ASC&ordenarPor=ano",
+            "Frentes": f"{URL_BASE_API}deputados/220703/frentes",
+            "Profissoes": f"{URL_BASE_API}deputados/220703/profissoes",
+            "Eventos": f"{URL_BASE_API}deputados/220703/eventos?dataInicio=2025-01-01&dataFim=2025-11-08&ordem=ASC&ordenarPor=dataHoraInicio"
+        }
+    },
+    "Áureo Ribeiro (SOLIDARIEDADE)": {
+        "id": "160512",
+        "partido": "SOLIDARIEDADE",
+        "urls": {
+            "Gerais": f"{URL_BASE_API}deputados/160512",
+            "Despesas": f"{URL_BASE_API}deputados/160512/despesas?ordem=ASC&ordenarPor=ano",
+            "Frentes": f"{URL_BASE_API}deputados/160512/frentes",
+            "Profissoes": f"{URL_BASE_API}deputados/160512/profissoes",
+            "Eventos": f"{URL_BASE_API}deputados/160512/eventos?dataInicio=2025-01-01&dataFim=2025-11-08&ordem=ASC&ordenarPor=dataHoraInicio"
+        }
+    },
+    "Adolfo Viana (PSDB)": {
+        "id": "204560",
+        "partido": "PSDB",
+        "urls": {
+            "Gerais": f"{URL_BASE_API}deputados/204560",
+            "Despesas": f"{URL_BASE_API}deputados/204560/despesas?ordem=ASC&ordenarPor=ano",
+            "Frentes": f"{URL_BASE_API}deputados/204560/frentes",
+            "Profissoes": f"{URL_BASE_API}deputados/204560/profissoes",
+            "Eventos": f"{URL_BASE_API}deputados/204560/eventos?dataInicio=2025-01-01&dataFim=2025-11-08&ordem=ASC&ordenarPor=dataHoraInicio"
+        }
+    },
+    "Rodrigo Gambale (PODE)": {
+        "id": "220641",
+        "partido": "PODE",
+        "urls": {
+            "Gerais": f"{URL_BASE_API}deputados/220641",
+            "Despesas": f"{URL_BASE_API}deputados/220641/despesas?ordem=ASC&ordenarPor=ano",
+            "Frentes": f"{URL_BASE_API}deputados/220641/frentes",
+            "Profissoes": f"{URL_BASE_API}deputados/220641/profissoes",
+            "Eventos": f"{URL_BASE_API}deputados/220641/eventos?dataInicio=2025-01-01&dataFim=2025-11-08&ordem=ASC&ordenarPor=dataHoraInicio"
         }
     }
 }
@@ -120,7 +243,10 @@ def exibir_ficha_parlamentar(nome_completo, dados_deputado):
     with col_kpi_dados:
         st.markdown("#### **Indicadores de Transparência e Atuação**")
         col_m1, col_m2 = st.columns(2)
-        col_m1.metric("Despesas Totais (últimos anos)", f"R$ {total_despesas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        
+        # ALTERAÇÃO SOLICITADA: Métrica de Despesas
+        col_m1.metric("Despesas Totais (últimos 6 meses)", f"R$ {total_despesas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        
         col_m2.metric("Eventos Públicos em 2025", f"{total_eventos} Eventos")
 
     st.markdown("---")

@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 import requests
 import json
 import time
@@ -12,7 +13,6 @@ URL_BASE_API = "https://dadosabertos.camara.leg.br/api/v2/"
 
 # DADOS COMPLETOS DE TODOS OS 11 LÍDERES
 LIDERES = {
-    # ------------------- LÍDERES INICIAIS -------------------
     "Sóstenes Cavalcante (PL)": {
         "id": "178947",
         "partido": "PL",
@@ -57,7 +57,6 @@ LIDERES = {
             "Eventos": f"{URL_BASE_API}deputados/156190/eventos?dataInicio=2025-01-01&dataFim=2025-11-08&ordem=ASC&ordenarPor=dataHoraInicio"
         }
     },
-    # ------------------- NOVOS LÍDERES ADICIONADOS -------------------
     "Antonio Brito (PSD)": {
         "id": "160553",
         "partido": "PSD",
@@ -181,6 +180,7 @@ LIDERES = {
     }
 }
 
+
 # --- 2. FUNÇÕES DE BUSCA E PROCESSAMENTO DA API ---
 
 @st.cache_data(ttl=3600)
@@ -196,7 +196,7 @@ def buscar_dados(url):
 def limpar_cache_api():
     """Limpa o cache do Streamlit."""
     st.cache_data.clear()
-    st.rerun()
+    st.experimental_rerun()
 
 def processar_despesas(dados):
     """Soma o valor líquido das despesas e retorna o total."""
@@ -206,6 +206,41 @@ def processar_despesas(dados):
     # A API usa 'valorLiquido' para o valor da despesa
     total = df['valorLiquido'].sum()
     return total
+
+def agregar_todos_os_dados():
+    """Busca e agrega Despesas, Eventos e Gênero para todos os líderes."""
+    
+    dados_agregados = []
+    
+    for nome, dados in LIDERES.items():
+        urls = dados['urls']
+        
+        # 1. Busca Despesas e Eventos
+        total_despesas = processar_despesas(buscar_dados(urls['Despesas']))
+        total_eventos = len(buscar_dados(urls['Eventos']))
+        
+        # 2. Busca Gênero e Nome Completo (do endpoint Geral)
+        dados_gerais = buscar_dados(urls['Gerais'])
+        
+        # A API tem o gênero na propriedade 'sexo' dentro do objeto principal
+        genero = 'Não Informado'
+        nome_parlamentar = nome.split('(')[0].strip()
+        
+        if dados_gerais and isinstance(dados_gerais, dict):
+            genero = dados_gerais.get('sexo', 'Não Informado')
+            # Usa o nomeCivil para o ranking se o nome for complexo (ex: 'Dr. Luizinho')
+            nome_parlamentar = dados_gerais.get('nomeCivil', nome_parlamentar)
+            
+        dados_agregados.append({
+            'Líder': nome,
+            'Nome Curto': nome_parlamentar,
+            'Gênero': 'Mulher' if genero == 'F' else 'Homem',
+            'Despesas_Total': total_despesas,
+            'Eventos_Total': total_eventos
+        })
+        
+    return pd.DataFrame(dados_agregados)
+
 
 def exibir_ficha_parlamentar(nome_completo, dados_deputado):
     """Busca e exibe todas as informações do deputado em expansores."""
@@ -244,7 +279,7 @@ def exibir_ficha_parlamentar(nome_completo, dados_deputado):
         st.markdown("#### **Indicadores de Transparência e Atuação**")
         col_m1, col_m2 = st.columns(2)
         
-        # ALTERAÇÃO SOLICITADA: Métrica de Despesas
+        # CORREÇÃO: Métrica de Despesas
         col_m1.metric("Despesas Totais (últimos 6 meses)", f"R$ {total_despesas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
         
         col_m2.metric("Eventos Públicos em 2025", f"{total_eventos} Eventos")
@@ -277,15 +312,85 @@ def exibir_ficha_parlamentar(nome_completo, dados_deputado):
 st.set_page_config(layout="wide", page_title="Monitor de Lideranças Parlamentares")
 
 st.title("🏛️ Análise de Transparência das Lideranças da Câmara")
-st.header("Líderes Partidários e Presidência (57ª Legislatura)")
+# CORREÇÃO: Removida a parte "e Presidência" do cabeçalho
+st.header("Líderes Partidários (57ª Legislatura)")
 
 # --- BOTÃO DE LIMPEZA DE CACHE ---
 st.sidebar.button("Resetar Cache da API", on_click=limpar_cache_api)
 
 st.markdown("---")
 
-# --- SELEÇÃO DO PARLAMENTAR ---
-st.subheader("Selecione o Líder para Visualizar a Ficha:")
+# =========================================================================
+# SEÇÃO 1: GRÁFICOS DE COMPARAÇÃO (Jurimetria)
+# =========================================================================
+
+st.subheader("1. Análise Comparativa de Atividade e Transparência")
+
+# Execução da Agregação
+with st.spinner("Buscando e agregando dados de todos os líderes..."):
+    df_comparativo = agregar_todos_os_dados()
+
+if not df_comparativo.empty and df_comparativo['Líder'].nunique() > 1:
+
+    # GRÁFICO A: Ranking de Despesas
+    st.markdown("##### 1.1. Ranking de Despesas Parlamentares (Cota/Gabinete)")
+    df_despesas_rank = df_comparativo.sort_values(by='Despesas_Total', ascending=False)
+    
+    fig_despesas = px.bar(
+        df_despesas_rank,
+        x='Nome Curto',
+        y='Despesas_Total',
+        color='Despesas_Total',
+        title='Líderes: Quem Gastou Mais (Valor não mostrado)',
+        labels={'Despesas_Total': 'Valor (R$)', 'Nome Curto': 'Líder'},
+        color_continuous_scale=px.colors.sequential.Reds
+    )
+    fig_despesas.update_traces(hovertemplate='Líder: %{x}<br>Despesa Total: R$ %{y:,.2f}<extra></extra>')
+    fig_despesas.update_yaxes(showticklabels=False) # Não mostrar valor exato no eixo
+    st.plotly_chart(fig_despesas, use_container_width=True)
+
+
+    # GRÁFICO B: Ranking de Eventos
+    st.markdown("##### 1.2. Ranking de Participação em Eventos Públicos (2025)")
+    df_eventos_rank = df_comparativo.sort_values(by='Eventos_Total', ascending=False)
+    
+    fig_eventos = px.bar(
+        df_eventos_rank,
+        x='Nome Curto',
+        y='Eventos_Total',
+        color='Eventos_Total',
+        title='Líderes: Quem Mais Participou de Eventos em 2025',
+        labels={'Eventos_Total': 'Quantidade', 'Nome Curto': 'Líder'},
+        color_continuous_scale=px.colors.sequential.Blues
+    )
+    fig_eventos.update_yaxes(showticklabels=False) # Não mostrar valor exato no eixo
+    st.plotly_chart(fig_eventos, use_container_width=True)
+
+    # GRÁFICO C: Distribuição de Gênero
+    st.markdown("##### 1.3. Distribuição de Gênero na Liderança")
+    df_genero_count = df_comparativo['Gênero'].value_counts().reset_index()
+    df_genero_count.columns = ['Gênero', 'Total']
+    
+    fig_genero = px.pie(
+        df_genero_count,
+        values='Total',
+        names='Gênero',
+        title='Proporção de Gênero entre os Líderes Partidários',
+        hole=.5,
+        color_discrete_map={'Mulher': 'purple', 'Homem': 'darkblue'}
+    )
+    st.plotly_chart(fig_genero, use_container_width=True)
+    
+
+st.markdown("---")
+
+
+# =========================================================================
+# SEÇÃO 2: FICHA INDIVIDUAL (Interatividade)
+# =========================================================================
+st.subheader("2. Ficha Individual de Transparência")
+st.caption("Detalhes sobre despesas, profissões e grupos de interesse de cada líder.")
+
 
 # Cria os botões radio com os nomes dos líderes
 parlamentar_selecionado = st.radio(
